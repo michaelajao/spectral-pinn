@@ -1,0 +1,16 @@
+# Fast end-to-end validation of the pipeline (NOT publication settings).
+device: auto
+seeds: [0]
+entries:
+  - {name: pinn,        kind: pinn, variables: primitive}
+  - {name: cnpinn_soft, kind: pinn, variables: primitive, weight_param: svd_soft, w_U: 2.857e-5}
+  - {name: ortho_hard,  kind: pinn, variables: primitive, weight_param: svd_hard}
+  - {name: fvm_pinn,    kind: fvm}
+benchmarks:
+  - {id: b1_circular_wet, reference_n: 256, grid_n: 48}
+train:
+  iters: 400
+  lr: 1.0e-3
+  n_collocation: 4000
+  fvm_times: 9          # collocation times in [0, t_end]
+  fvm_nsub_max: 8

@@ -1,0 +1,26 @@
+# Phase 1 comparison matrix: spectral variants vs baselines on the dam-break
+# benchmarks. w_U for cnpinn_soft follows Wang et al.'s advection setting
+# (1/35000); revisit per-benchmark if the reproduction study says otherwise.
+device: auto
+seeds: [0, 1, 2, 3, 4]
+entries:
+  - {name: pinn,         kind: pinn, variables: primitive}
+  - {name: pinn_fourier, kind: pinn, variables: primitive, fourier_features: 32}
+  - {name: cnpinn_soft,  kind: pinn, variables: primitive, weight_param: svd_soft, w_U: 2.857e-5}
+  - {name: ortho_hard,   kind: pinn, variables: primitive, weight_param: svd_hard}
+  - {name: svd_sigma,    kind: pinn, variables: primitive, weight_param: svd_sigma}
+  - {name: fvm_pinn,     kind: fvm}
+benchmarks:
+  - {id: ca_circular_wet, reference_n: 512, grid_n: 128}
+  - {id: ca_circular_dry, reference_n: 512, grid_n: 128}
+  - {id: ca_step,         reference_n: 512, grid_n: 128}
+  - {id: ca_gaussian,     reference_n: 512, grid_n: 128}
+  - {id: b3_three_humps,  reference_n: 512, grid_n: 128}
+train:
+  iters: 20000
+  lr: 1.0e-3
+  grad_clip: 1.0
+  n_collocation: 20000
+  fvm_times: 41
+  fvm_nsub_max: 24
+  fvm_stochastic: true

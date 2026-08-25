@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# experiment outputs
+runs/
+logs/
+
+# external reference data (never committed)
+data/
+
+# third-party reference code (cloned, not ours)
+third_party/

@@ -155,10 +155,17 @@ def main() -> None:
                    help="orthogonality weight for svd_soft (paper: 1/35000)")
     p.add_argument("--out", type=Path,
                    default=ROOT / "reports" / "advection_reproduction.md")
+    p.add_argument("--modes", default=",".join(WEIGHT_PARAMS),
+                   help="comma-separated subset of " + ",".join(WEIGHT_PARAMS))
     args = p.parse_args()
 
-    entries = [("pinn (dense)", "dense"), ("cnpinn (svd_soft)", "svd_soft"),
-               ("ortho (svd_hard)", "svd_hard"), ("sigma (svd_sigma)", "svd_sigma")]
+    labels = {"dense": "pinn (dense)", "svd_soft": "cnpinn (svd_soft)",
+              "svd_hard": "ortho (svd_hard)", "svd_sigma": "sigma (svd_sigma)"}
+    modes = [m.strip() for m in args.modes.split(",") if m.strip()]
+    unknown = [m for m in modes if m not in WEIGHT_PARAMS]
+    if unknown:
+        p.error(f"unknown modes {unknown}; choose from {WEIGHT_PARAMS}")
+    entries = [(labels[m], m) for m in modes]
     rows = []
     for label, wp in entries:
         errs = [train_one(wp, s, args.iters, args.w_U) for s in range(args.seeds)]

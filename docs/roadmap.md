@@ -18,7 +18,7 @@ effort alongside other work.
 
 ## Phase 1 — comparison matrix on the dam-break suite (~2–3 weeks)
 
-- [ ] Smoke run (`configs/smoke.yaml`) end-to-end on GPU
+- [x] Smoke run (`configs/smoke.yaml`) end-to-end on GPU (2026-08-25)
 - [ ] Full matrix (`configs/main.yaml`): 6 entries x 5 benchmarks x 5 seeds
 - [ ] Cost/accuracy frontier table (dense / soft / hard / sigma)
 - [ ] Augmented-Lagrangian soft variant as the adaptive-w_U ablation

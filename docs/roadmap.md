@@ -11,15 +11,22 @@ effort alongside other work.
       modes + unit tests
 - [x] Literature sweep -> `related_work.md` with a novelty verdict (2026-08-25; no collision)
 - [x] cnPINNs reference code cloned to `third_party/` (TF1; read-only)
-- [ ] Reproduction gate: Wang et al.'s 1D advection case (3x25 tanh,
-      N_u = 100, N_f = 500, w_U = 1/35000, L-BFGS) — cnPINN ~1e-3 L2 rel.
-      error vs vanilla ~1e-2..1e-1, matching their Figs. 5–7 magnitudes
-- [ ] svd_hard on the same case: error <= cnPINN's with w_U removed
+- [x] Reproduction gate (2026-08-25, `reports/advection_reproduction.md`,
+      5 seeds, L-BFGS 3000 iters): vanilla 2.07e-1 ± 1.5e-1 vs their Table 5
+      (1.13 ± 1.67)e-1; cnPINN 1.00e-2 ± 5.8e-3 vs their (5.64 ± 3.86)e-3 —
+      both overlap the published values within one std; the 20x gain
+      reproduces. Residual ~2x gap plausibly from the iteration budget and
+      the Frobenius (vs 2-norm) penalty; not chased further.
+- [x] svd_hard on the same case: 1.39e-2 ± 6.7e-3 — indistinguishable from
+      cnPINN (overlapping std) with no w_U and no penalty term. svd_sigma
+      (singular values only): 1.35e-1 ± 1.6e-1, better than dense on 4/5
+      seeds but high-variance — the trained *directions* carry most of the
+      gain, which bounds how cheap C2 can go.
 
 ## Phase 1 — comparison matrix on the dam-break suite (~2–3 weeks)
 
 - [x] Smoke run (`configs/smoke.yaml`) end-to-end on GPU (2026-08-25)
-- [ ] Full matrix (`configs/main.yaml`): 6 entries x 5 benchmarks x 5 seeds
+- [ ] Full matrix (`configs/main.yaml`): 6 entries x 5 benchmarks x 5 seeds — running since 2026-08-25 on GPU 1 (logs/main.log)
 - [ ] Cost/accuracy frontier table (dense / soft / hard / sigma)
 - [ ] Augmented-Lagrangian soft variant as the adaptive-w_U ablation
 

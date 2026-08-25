@@ -284,8 +284,9 @@ def main() -> None:
                 results.setdefault((entry["name"], bid), []).append(m)
                 print(f"  {tag}: L1_h={m['L1_h']:.3e} drift={m['mass_drift']:.2e} "
                       f"train={tm.elapsed:.1f}s")
-
-    write_report(cfg, results, classical, device, cfg_path)
+        # rewrite the table after every benchmark so a long matrix run that
+        # dies part-way still leaves its finished rows on disk
+        write_report(cfg, results, classical, device, cfg_path)
 
 
 def _agg(vals):
@@ -312,7 +313,7 @@ def write_report(cfg, results, classical, device, cfg_path):
              "same resolution.\n")
     L.append(f"Settings: iters={cfg['train']['iters']}, seeds={cfg['seeds']}.\n")
 
-    bids = [b["id"] for b in cfg["benchmarks"]]
+    bids = [b["id"] for b in cfg["benchmarks"] if b["id"] in classical]
     for bid in bids:
         L.append(f"\n## {bid}\n")
         L.append("| method | L1(h) | L2(h) | L1(speed) | mass drift | front err |")

@@ -249,6 +249,26 @@ def test_spectral_pinn_residual_gradients_reach_svd_factors():
             assert lay.s.grad is not None and torch.isfinite(lay.s.grad).all()
 
 
+def test_svd_layers_train_under_lbfgs():
+    """L-BFGS flattens grads with .view(-1), which requires contiguous
+    parameters; the SVD factors from LAPACK are strided views, so this guards
+    the fix that makes every mode usable with the optimizer Wang et al. use."""
+    x = torch.randn(16, 12)
+    for mode in ("svd_soft", "svd_hard", "svd_sigma"):
+        lin = SVDLinear(12, 12, mode=mode)
+        opt = torch.optim.LBFGS(lin.parameters(), max_iter=5)
+
+        def closure():
+            opt.zero_grad()
+            loss = ((lin(x) - x) ** 2).mean()
+            loss.backward()
+            return loss
+
+        l0 = float(closure())
+        opt.step(closure)
+        assert float(closure()) < l0
+
+
 def test_xavier_init_option():
     m = PINN(PINNConfig(hidden=16, layers=2, init="xavier"))
     assert m.forward(torch.rand(4, 3))[0].shape == (4,)

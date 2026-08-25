@@ -9,8 +9,8 @@ effort alongside other work.
       swe-dambreak, tests green
 - [x] `SVDLinear` with `svd_soft` (cnPINN), `svd_hard` (ours), `svd_sigma`
       modes + unit tests
-- [ ] Literature sweep -> `related_work.md` with a novelty verdict
-- [ ] cnPINNs reference code cloned to `third_party/` (TF1; read-only)
+- [x] Literature sweep -> `related_work.md` with a novelty verdict (2026-08-25; no collision)
+- [x] cnPINNs reference code cloned to `third_party/` (TF1; read-only)
 - [ ] Reproduction gate: Wang et al.'s 1D advection case (3x25 tanh,
       N_u = 100, N_f = 500, w_U = 1/35000, L-BFGS) — cnPINN ~1e-3 L2 rel.
       error vs vanilla ~1e-2..1e-1, matching their Figs. 5–7 magnitudes

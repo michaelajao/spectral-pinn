@@ -117,6 +117,10 @@ class SVDLinear(nn.Module):
         w0 = torch.empty(out_features, in_features)
         _init_weight(w0, init)
         U, s, Vh = torch.linalg.svd(w0, full_matrices=False)
+        # LAPACK returns strided views (Vh is a transposed V); parameters must
+        # be contiguous or their grads inherit the strides and L-BFGS's
+        # flat-gradient gather (p.grad.view(-1)) fails.
+        U, s, Vh = U.contiguous(), s.contiguous(), Vh.contiguous()
 
         self.s = nn.Parameter(s)
         self.register_buffer("Vh", Vh)
@@ -136,6 +140,16 @@ class SVDLinear(nn.Module):
             nn.init.uniform_(self.bias, -bound, bound)
         else:
             self.register_parameter("bias", None)
+
+        # Autograd hands U a transposed (non-contiguous) gradient through the
+        # linear -> matmul backward, and torch's L-BFGS flattens gradients
+        # with ``.view(-1)``, which rejects that layout. Making the layer's
+        # own gradients contiguous here keeps every optimizer usable without
+        # per-script workarounds. (For svd_hard the trainable leaf is the
+        # parametrization's ``original`` tensor, covered by ``parameters()``.)
+        for p in self.parameters():
+            if p.requires_grad:
+                p.register_hook(lambda g: g.contiguous())
 
     def weight(self) -> torch.Tensor:
         """Effective weight W = U diag(s) V^T."""

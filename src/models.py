@@ -141,16 +141,6 @@ class SVDLinear(nn.Module):
         else:
             self.register_parameter("bias", None)
 
-        # Autograd hands U a transposed (non-contiguous) gradient through the
-        # linear -> matmul backward, and torch's L-BFGS flattens gradients
-        # with ``.view(-1)``, which rejects that layout. Making the layer's
-        # own gradients contiguous here keeps every optimizer usable without
-        # per-script workarounds. (For svd_hard the trainable leaf is the
-        # parametrization's ``original`` tensor, covered by ``parameters()``.)
-        for p in self.parameters():
-            if p.requires_grad:
-                p.register_hook(lambda g: g.contiguous())
-
     def weight(self) -> torch.Tensor:
         """Effective weight W = U diag(s) V^T."""
         return (self.U * self.s) @ self.Vh

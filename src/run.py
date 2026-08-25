@@ -102,6 +102,7 @@ def setup_pinn(entry, eval_bi, device, tr, seed):
         fourier_scale=entry.get("fourier_scale", 1.0),
         fourier_seed=seed,
         weight_param=entry.get("weight_param", "dense"),
+        defect_norm=entry.get("defect_norm", "spectral"),
         init=entry.get("init", "default"),
         x_range=(x0, x1), y_range=(y0, y1), t_range=(0.0, eval_bi.t_end),
     )
@@ -130,9 +131,9 @@ def setup_pinn(entry, eval_bi, device, tr, seed):
         total = L_pde + 10.0 * L_ic
         comps = {"pde": float(L_pde), "ic": float(L_ic)}
         if w_U > 0.0:
-            D_U = model.orthogonality_defect()
-            total = total + w_U * D_U
-            comps["orth"] = float(D_U)
+            P_U = model.orthogonality_penalty()      # sum_j D_j^2, Eq. 15
+            total = total + w_U * P_U
+            comps["orth"] = float(P_U)
         return total, comps
 
     def evaluate(device):

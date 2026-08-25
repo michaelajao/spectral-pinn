@@ -3,9 +3,16 @@
 **Paper.** Z.-P. Wang, J.-Y. Chen, L.-L. Guo, L.-S. Zhang, Z.-Y. Zhang,
 "Utilizing condition number to diagnose and mitigate the training failure of
 physics-informed neural network," *Applied Soft Computing* 202 (2026) 115794.
-Code: https://github.com/zzy-muc/cnPINNs (TensorFlow 1.x, Navier–Stokes
-example only; the script references an undefined global and ships without its
-data file, so it documents the method rather than reproducing the tables).
+Code: https://github.com/zzy-muc/cnPINNs (TensorFlow 1.x with tf.contrib's
+ScipyOptimizerInterface, so it will not run on a modern stack; Navier–Stokes
+example only, with the Taylor–Green reference computed analytically; relies
+on globals set under ``__main__``). Two discrepancies from the paper text
+matter for anyone reimplementing it: the code freezes U and trains V (the
+paper's Sect. 4.6.2 says the two are equivalent), and it penalizes an
+*unsquared* matrix 1-norm of the defect, whereas Eq. 15 squares a 2-norm.
+Squared vs unsquared is not cosmetic: D^2 has zero gradient at an orthogonal
+initialization, which is what makes their adaptive-weighting attempts blow
+up (Sect. 4.6.3). We follow Eq. 15 and footnote the code.
 
 ## Framing correction
 
@@ -57,9 +64,10 @@ A spectral reparameterization of the hidden weights:
 2. Freeze V_j; train U_j and diag(S_j) in place of W_j.
 3. Add w_U ||U^T U - I||_2^2 to the loss to keep U near-orthogonal.
 
-Cost: +n parameters per layer; 1.28–1.83x vanilla PINN wall-clock on their
-Navier–Stokes runs; GPU memory 1263 MB peak vs 1252 MB for vanilla (their
-Table 4). Mechanism: with U and V orthogonal, diag(S) *is* the singular-value
+Cost: +n parameters per layer; 1.28–1.83x vanilla PINN wall-clock across
+their Navier–Stokes width and collocation-point sweeps (Figs. 15D, 17D; the
+depth sweep's values are not given in the text); GPU memory 1263 MB peak vs
+1252 MB for vanilla (their Table 4). Mechanism: with U and V orthogonal, diag(S) *is* the singular-value
 spectrum of W, so the optimizer gets a decoupled handle on the network's
 Lipschitz scale instead of moving it implicitly through dense updates (their
 Prop. 3.2 sandwiches kappa(u_theta) between products of min/max singular
@@ -68,26 +76,33 @@ values).
 ## Headline numbers
 
 - Taylor–Green (5x50 tanh, N_f = 10^4, Adam 20k -> L-BFGS): cnPINN reaches
-  ~6e-3 on u, v where PINN/AAF/NTK sit at 2–4e-2 and E-DNN at ~6e-3 with 2.5–
-  3.8x cost; best pressure error 3.86e-4 (their Figs. 15–17, Table 3).
-- Noise: at 5% Gaussian IC/BC noise cnPINN holds 8–9e-3 on u, v; the others
-  degrade to 1–4e-2 (Table 3).
+  6.1e-3 / 6.7e-3 on u / v where PINN, AAF and NTK sit at 2.4–2.9e-2 and
+  E-DNN at 6.2e-3 / 6.9e-3 with 2.5–3.8x cost (Table 3 at 0% noise,
+  Fig. 15D). Best pressure error 3.86e-4, from the width sweep at 20 neurons
+  (Fig. 15C); Table 3's pressure figure at 0% noise is 4.54e-3.
+- Noise: at 5% Gaussian IC/BC noise cnPINN holds 8.8e-3 / 7.8e-3 on u / v;
+  the others degrade to 1.4–4.4e-2 (Table 3).
 - Loss: final total loss 4.46e-7; no compared method breaks 1e-6 (Fig. 19).
 
 ## Weaknesses to keep in view
 
-1. w_U is hand-tuned per PDE (1/35000 advection, 1/200000 Navier–Stokes),
-   and their Section 4.6.3 reports that NTK- and DB-PINN-style adaptive
-   weighting *fails* for this term because the orthogonality loss starts at
-   exactly zero, so the adapted weight diverges.
+1. w_U is hand-tuned per PDE over two and a half decades — 1/35000
+   (advection), 1/20000 (mKdV), 1/1000 (Klein–Gordon), 1/600
+   (Lotka–Volterra), 1/200000 (Navier–Stokes) — and their Section 4.6.3
+   reports that NTK- and DB-PINN-style adaptive weighting *fails* for this
+   term because the orthogonality loss starts at exactly zero, so the
+   adapted weight grows without bound.
 2. No Fourier-feature, SIREN, modified-MLP, or hard-BC baselines — random
    Fourier features are the standard remedy for exactly the high-frequency
-   targets the paper opens with.
+   targets the paper opens with. (A sine activation appears only as an
+   ablation of cnPINN itself in Table 5, not as a SIREN baseline.)
 3. Three runs per Navier–Stokes cell; some wins sit inside one standard
    deviation of the baseline (pressure at 0% noise: PINN (8.84±9.27)e-3 vs
    cnPINN (4.54±3.75)e-3).
 4. The conclusion claims the five PDEs "cannot be trained by the vanilla PINN
-   and AAF"; their own tables show vanilla PINN training to 1–4e-2, i.e.
+   and AAF"; their own results show vanilla PINN reaching 1e-3 to 4e-2
+   depending on the case (7.5e-3 on Klein–Gordon, Sect. 4.3; 9.8e-3 / 1.6e-3
+   on Lotka–Volterra, Table 2; 1e-3 in 8 of 100 advection runs, Sect. 2.2) —
    worse, not failing.
 5. Section 4 states all experiments ran on an i5-12400F CPU; Section 4.5.5
    reports GPU memory.

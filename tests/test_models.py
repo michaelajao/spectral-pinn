@@ -192,11 +192,18 @@ def test_svd_layer_reproduces_initial_weight():
 
 
 def test_svd_soft_defect_zero_at_init_positive_after_perturbation():
+    """D_U = ||U^T U - I||_2 is round-off at init and grows once U moves;
+    the Frobenius option upper-bounds the 2-norm."""
     lin = SVDLinear(16, 16, mode="svd_soft")
-    assert float(lin.orthogonality_defect()) < 1e-9      # SVD gives orthogonal U
+    assert float(lin.orthogonality_defect()) < 1e-5      # SVD gives orthogonal U
     with torch.no_grad():
         lin.U += 0.1 * torch.randn_like(lin.U)
-    assert float(lin.orthogonality_defect()) > 1e-3      # training breaks it
+    d2 = float(lin.orthogonality_defect())
+    assert d2 > 1e-2                                     # training breaks it
+    fro = SVDLinear(16, 16, mode="svd_soft", defect_norm="frobenius")
+    with torch.no_grad():
+        fro.U.copy_(lin.U)
+    assert float(fro.orthogonality_defect()) >= d2 - 1e-6
 
 
 def test_svd_hard_stays_orthogonal_under_optimization():
@@ -227,12 +234,27 @@ def test_svd_sigma_trains_only_singular_values():
     assert torch.allclose(lin.U.T @ lin.U, torch.eye(16), atol=1e-5)
 
 
-def test_orthogonality_defect_aggregation():
+def test_orthogonality_penalty_aggregation():
     dense = PINN(PINNConfig(hidden=16, layers=3, weight_param="dense"))
-    assert float(dense.orthogonality_defect()) == 0.0
+    assert float(dense.orthogonality_penalty()) == 0.0
     soft = PINN(PINNConfig(hidden=16, layers=3, weight_param="svd_soft"))
-    d = soft.orthogonality_defect()
-    assert d.shape == () and float(d) < 1e-8   # orthogonal at init
+    p = soft.orthogonality_penalty()
+    assert p.shape == () and float(p) < 1e-8   # squared round-off at init
+
+
+def test_penalty_gradient_is_finite_at_orthogonal_init():
+    """The 2-norm of a near-zero symmetric matrix has a degenerate spectrum;
+    its autograd must still be finite so the first L-BFGS step is sane."""
+    lin = SVDLinear(16, 16, mode="svd_soft")
+    (lin.orthogonality_defect() ** 2).backward()
+    assert torch.isfinite(lin.U.grad).all()
+
+
+def test_xavier_zero_bias_consistent_across_layer_types():
+    m = PINN(PINNConfig(hidden=16, layers=3, weight_param="svd_soft", init="xavier"))
+    for lay in m.net:
+        if hasattr(lay, "bias") and lay.bias is not None:
+            assert float(lay.bias.abs().max()) == 0.0
 
 
 def test_spectral_pinn_residual_gradients_reach_svd_factors():

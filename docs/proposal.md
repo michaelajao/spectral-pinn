@@ -12,25 +12,30 @@ Wang et al. (2026) close cnPINN (see `paper_breakdown.md`) with three open
 problems: (1) the orthogonality-penalty weight w_U must be hand-tuned per
 PDE, and the adaptive-weighting schemes they tried (NTK, DB-PINN) diverge on
 it because the penalty starts at exactly zero; (2) the penalty adds training
-cost (1.28–1.83x vanilla in their runs); (3) validation covers only smooth
-synthetic examples. A paper that resolves all three, on problems their
+cost (1.28–1.83x vanilla across their width and collocation sweeps, Figs.
+15D and 17D); (3) validation covers only "controlled synthetic examples"
+(their words) — all five of which are smooth. A paper that resolves all three, on problems their
 H^1-based theory formally excludes, is the project.
 
 ## Contributions
 
 **C1 — remove the penalty, not tune it.** Parameterize U on the orthogonal
 manifold (torch's built-in orthogonal parametrization, after Lezcano-Casado &
-Martínez-Rubio 2019), so U^T U = I holds by construction, w_U ceases to
-exist, and the singular values of each hidden weight are exactly the trained
-diag(S). This turns their Theorem 3.3 bound into an identity. Implemented in
+Martínez-Rubio 2019), so U^T U = I holds to machine precision by
+construction, w_U ceases to exist, and the singular values of each hidden
+weight equal the trained diag(S) to round-off. This turns their Theorem 3.3
+bound into an identity. Implemented in
 `src/models.py` as `weight_param: svd_hard`; an augmented-Lagrangian soft
 version serves as the ablation baseline for the "adaptive w_U" reading of
 their limitation 1.
 
 **C2 — cost.** The `svd_sigma` variant trains only the n singular values per
 layer (U, V frozen orthogonal): exact spectral control at n parameters per
-layer, the r -> 0 limit of their own cnPINN-r sweep, which already showed
-most rows of U inert. Report a cost/accuracy frontier across dense, soft,
+layer, the r -> 0 limit of their own cnPINN-r sweep, in which several r < N
+settings match or beat r = N (their Sect. 4.6.4, Fig. 20). Structurally this
+layer is identical to SVD-PINNs (Gao, Cheung & Ng, arXiv 2211.08760), which
+uses it for transfer from a trained model; the from-scratch use and the
+cost/accuracy frontier are what is new, and the paper must say so. Report a cost/accuracy frontier across dense, soft,
 hard, and sigma on identical budgets.
 
 **C3 — validation in the excluded regime.** The 2D dam-break suite ported
@@ -84,7 +89,11 @@ anything about hyperbolic problems.
   fallback is the Adam -> L-BFGS schedule Wang et al. themselves use for
   Navier–Stokes.
 - The w_U-free claim must be tested against a *tuned* soft baseline, not a
-  strawman: reuse their published per-PDE values.
+  strawman. Their five published w_U values span 1/600 to 1/200000 and none
+  is for shallow-water flow, so the baseline needs a Table-7-style sweep on
+  one benchmark before the matrix numbers mean anything; the penalty must
+  be Eq. 15's squared 2-norm (our first implementation used a Frobenius
+  norm, up to a factor 128 stronger at width 128 — corrected 2026-08-25).
 
 ## Venue
 

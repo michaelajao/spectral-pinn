@@ -17,14 +17,19 @@ reimplements and extends, the first (input) and last (output) layers keep
 dense weights.
 
   dense       plain nn.Linear everywhere (the baseline).
-  svd_soft    cnPINN as published: train U and s, freeze V^T, and penalize
-              the orthogonality defect D_U = ||U^T U - I||_F^2 with a weight
-              w_U supplied by the caller. (The paper uses the matrix 2-norm;
-              the Frobenius norm upper-bounds it, so the penalty is at least
-              as strong, and it is cheaper and smoother to differentiate.)
-  svd_hard    this project's method: train U and s with U kept *exactly*
-              orthogonal by torch's orthogonal parametrization — no penalty
-              term, no w_U, and the singular values of W are exactly |s|.
+  svd_soft    cnPINN as published: train U and s, freeze V^T, and add
+              w_U * D_U^2 to the loss with D_U = ||U^T U - I||_2 (their
+              Eq. 15 and Theorem 3.3; the matrix 2-norm, i.e. the largest
+              |eigenvalue| of the symmetric defect). ``defect_norm`` can
+              switch to the Frobenius norm, which upper-bounds the 2-norm
+              by up to a factor sqrt(n) — kept as an ablation, not as the
+              published baseline. Note the authors' released code differs
+              from their Eq. 15 (it freezes U, trains V, and penalizes an
+              unsquared matrix 1-norm); we follow the paper.
+  svd_hard    this project's method: train U and s with U kept orthogonal
+              to machine precision by torch's orthogonal parametrization —
+              no penalty term, no w_U, and the singular values of W equal
+              |s| to round-off.
   svd_sigma   train only s with U and V^T frozen at their orthogonal initial
               values: n trainable parameters per layer, exact spectral
               control, the cheapest member of the family.
@@ -106,13 +111,17 @@ class SVDLinear(nn.Module):
     """
 
     def __init__(self, in_features: int, out_features: int, mode: str,
-                 init: str = "default", bias: bool = True):
+                 init: str = "default", bias: bool = True,
+                 defect_norm: str = "spectral"):
         super().__init__()
         if mode not in ("svd_soft", "svd_hard", "svd_sigma"):
             raise ValueError(f"unknown SVDLinear mode '{mode}'")
+        if defect_norm not in ("spectral", "frobenius"):
+            raise ValueError(f"unknown defect_norm '{defect_norm}'")
         self.in_features = in_features
         self.out_features = out_features
         self.mode = mode
+        self.defect_norm = defect_norm
 
         w0 = torch.empty(out_features, in_features)
         _init_weight(w0, init)
@@ -136,8 +145,11 @@ class SVDLinear(nn.Module):
 
         if bias:
             self.bias = nn.Parameter(torch.empty(out_features))
-            bound = 1.0 / math.sqrt(in_features)
-            nn.init.uniform_(self.bias, -bound, bound)
+            if init == "xavier":
+                nn.init.zeros_(self.bias)        # as the dense layers under xavier
+            else:
+                bound = 1.0 / math.sqrt(in_features)
+                nn.init.uniform_(self.bias, -bound, bound)
         else:
             self.register_parameter("bias", None)
 
@@ -146,28 +158,33 @@ class SVDLinear(nn.Module):
         return (self.U * self.s) @ self.Vh
 
     def orthogonality_defect(self) -> torch.Tensor:
-        """D_U = ||U^T U - I||_F^2 (identically ~0 for svd_hard/svd_sigma)."""
+        """D_U = ||U^T U - I|| in ``defect_norm`` (2-norm by default, per
+        Wang et al. Theorem 3.3); ~0 to round-off for svd_hard/svd_sigma."""
         UtU = self.U.T @ self.U
         eye = torch.eye(UtU.shape[0], dtype=UtU.dtype, device=UtU.device)
-        return ((UtU - eye) ** 2).sum()
+        if self.defect_norm == "spectral":
+            return torch.linalg.matrix_norm(UtU - eye, ord=2)
+        return torch.linalg.matrix_norm(UtU - eye, ord="fro")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return nn.functional.linear(x, self.weight(), self.bias)
 
     def extra_repr(self) -> str:
         return (f"in_features={self.in_features}, "
-                f"out_features={self.out_features}, mode={self.mode}")
+                f"out_features={self.out_features}, mode={self.mode}, "
+                f"defect_norm={self.defect_norm}")
 
 
 def _make_linear(in_f: int, out_f: int, weight_param: str, init: str,
-                 *, reparam: bool) -> nn.Module:
+                 *, reparam: bool, defect_norm: str = "spectral") -> nn.Module:
     """A hidden-stack layer: SVD-reparameterized iff requested AND eligible.
 
     Only square hidden->hidden layers are reparameterized (``reparam=True``);
     the input and output layers always stay dense, following Wang et al.
     """
     if reparam and weight_param != "dense":
-        return SVDLinear(in_f, out_f, mode=weight_param, init=init)
+        return SVDLinear(in_f, out_f, mode=weight_param, init=init,
+                         defect_norm=defect_norm)
     lin = nn.Linear(in_f, out_f)
     _init_weight(lin.weight, init)
     if init == "xavier":
@@ -190,6 +207,7 @@ class PINNConfig:
     fourier_seed: int = 0              # wire to the run seed for seed-varied B
     softplus_h: bool = False           # hard-enforce h>=0 (off for honest baseline)
     weight_param: str = "dense"        # see WEIGHT_PARAMS
+    defect_norm: str = "spectral"      # "spectral" (paper Eq. 15) | "frobenius"
     init: str = "default"              # "default" | "xavier"
     # input normalization bounds (x, y, t); set from the case domain
     x_range: tuple[float, float] = (0.0, 1.0)
@@ -228,7 +246,8 @@ class PINN(nn.Module):
         for _ in range(cfg.layers - 1):
             layers += [
                 _make_linear(cfg.hidden, cfg.hidden, cfg.weight_param,
-                             cfg.init, reparam=True),
+                             cfg.init, reparam=True,
+                             defect_norm=cfg.defect_norm),
                 act(),
             ]
         layers += [_make_linear(cfg.hidden, 3, cfg.weight_param, cfg.init,
@@ -239,14 +258,15 @@ class PINN(nn.Module):
     def svd_layers(self) -> list[SVDLinear]:
         return [m for m in self.net if isinstance(m, SVDLinear)]
 
-    def orthogonality_defect(self) -> torch.Tensor:
-        """Sum of D_U over reparameterized layers (0-dim tensor; zero when
-        there are none). Only meaningful as a loss term for ``svd_soft`` —
-        the hard variant is orthogonal by construction."""
+    def orthogonality_penalty(self) -> torch.Tensor:
+        """sum_j D_{U_j}^2 over reparameterized layers (Wang et al. Eq. 15,
+        read as a per-layer sum of squared defects); 0-dim, zero when there
+        are none. Multiply by w_U in the loss. Only meaningful for
+        ``svd_soft`` — the hard variant is orthogonal by construction."""
         layers = self.svd_layers
         if not layers:
             return self.in_lo.new_zeros(())
-        return torch.stack([m.orthogonality_defect() for m in layers]).sum()
+        return torch.stack([m.orthogonality_defect() ** 2 for m in layers]).sum()
 
     def normalize(self, xyt: torch.Tensor) -> torch.Tensor:
         # cast to the network's dtype/device (grid coords arrive as float64)

@@ -1,12 +1,19 @@
 # Phase 1 comparison matrix: spectral variants vs baselines on the dam-break
-# benchmarks. w_U for cnpinn_soft follows Wang et al.'s advection setting
-# (1/35000); revisit per-benchmark if the reproduction study says otherwise.
+# benchmarks. The soft (cnPINN) penalty is Wang et al.'s Eq. 15, w_U * D_U^2
+# with D_U the matrix 2-norm of U^T U - I (defect_norm: spectral, the
+# default). No published w_U exists for shallow-water flow (theirs span
+# 1/600 .. 1/200000 across five PDEs), so the sweep entries below bracket it
+# on one benchmark in the style of their Table 7; the headline cnpinn_soft
+# row uses the advection value until the sweep says otherwise.
 device: auto
 seeds: [0, 1, 2, 3, 4]
 entries:
   - {name: pinn,         kind: pinn, variables: primitive}
   - {name: pinn_fourier, kind: pinn, variables: primitive, fourier_features: 32}
   - {name: cnpinn_soft,  kind: pinn, variables: primitive, weight_param: svd_soft, w_U: 2.857e-5}
+  - {name: cnpinn_soft_wU1e-3, kind: pinn, variables: primitive, weight_param: svd_soft, w_U: 1.0e-3, only_benchmarks: [ca_circular_wet]}
+  - {name: cnpinn_soft_wU1e-4, kind: pinn, variables: primitive, weight_param: svd_soft, w_U: 1.0e-4, only_benchmarks: [ca_circular_wet]}
+  - {name: cnpinn_soft_wU1e-6, kind: pinn, variables: primitive, weight_param: svd_soft, w_U: 1.0e-6, only_benchmarks: [ca_circular_wet]}
   - {name: ortho_hard,   kind: pinn, variables: primitive, weight_param: svd_hard}
   - {name: svd_sigma,    kind: pinn, variables: primitive, weight_param: svd_sigma}
   - {name: fvm_pinn,     kind: fvm}

@@ -13,9 +13,11 @@ vanilla PINN, svd_soft = cnPINN, svd_hard, svd_sigma) over several seeds and
 writes a summary table. The published magnitudes to match (their Figs. 5-7):
 cnPINN ~1e-3 L2 relative error, vanilla PINN ~1e-2..1e-1.
 
-Their reference implementation (third_party/cnPINNs) is TensorFlow 1.x and
-ships without its data file, so the comparison target is the paper's reported
-numbers, not a rerun of their code.
+Their reference implementation (third_party/cnPINNs) is TensorFlow 1.x with
+tf.contrib's ScipyOptimizerInterface, covers only the Navier-Stokes case, and
+implements a variant of the paper's Eq. 15 (U frozen, V trained, unsquared
+matrix 1-norm penalty), so the comparison target is the paper's reported
+numbers, not a rerun of their code. We follow Eq. 15: w_U * ||U^T U - I||_2^2.
 
 Usage: python -m src.advection [--iters 3000] [--seeds 5] [--out reports/advection.md]
 """
@@ -65,11 +67,12 @@ class AdvectionMLP(nn.Module):
     def forward(self, xt: torch.Tensor) -> torch.Tensor:
         return self.net(xt).squeeze(-1)
 
-    def orthogonality_defect(self) -> torch.Tensor:
+    def orthogonality_penalty(self) -> torch.Tensor:
+        """sum_j D_{U_j}^2 with D_U = ||U^T U - I||_2 (paper Eq. 15)."""
         svd = [m for m in self.net if isinstance(m, SVDLinear)]
         if not svd:
             return torch.zeros(())
-        return torch.stack([m.orthogonality_defect() for m in svd]).sum()
+        return torch.stack([m.orthogonality_defect() ** 2 for m in svd]).sum()
 
 
 def latin_hypercube(n: int, dims: int, gen: torch.Generator) -> torch.Tensor:
@@ -127,7 +130,7 @@ def train_one(weight_param: str, seed: int, iters: int, w_U: float) -> float:
         L_f = ((u_t + u_x) ** 2).mean()
         loss = L_ub + L_f
         if w_U > 0.0 and weight_param == "svd_soft":
-            loss = loss + w_U * model.orthogonality_defect()
+            loss = loss + w_U * model.orthogonality_penalty()
         loss.backward()
         return loss
 

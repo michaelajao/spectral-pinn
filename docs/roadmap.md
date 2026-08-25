@@ -48,3 +48,30 @@ effort alongside other work.
 ## Phase 4 — writing (~3–4 weeks)
 
 - [ ] Draft; venue call (ASOC first choice) after Phase 1–2 results
+
+## Results log
+
+**2026-08-25 — Phase 0 reproduction gate (Wang et al. advection case), 5 seeds,
+L-BFGS 3000 iterations, L2 relative error mean ± std.** Full table in
+`reports/advection_reproduction.md`.
+
+| entry | ours | Wang et al. Table 5 (tanh) |
+|---|---|---|
+| vanilla PINN (dense) | 2.07e-1 ± 1.5e-1 | (1.13 ± 1.67)e-1 |
+| cnPINN (svd_soft, w_U = 1/35000) | 1.00e-2 ± 5.8e-3 | (5.64 ± 3.86)e-3 |
+| ours (svd_hard, no penalty, no w_U) | 1.39e-2 ± 6.7e-3 | — |
+| svd_sigma (singular values only) | 1.35e-1 ± 1.6e-1 | — |
+
+Reading: both published cells overlap ours within one standard deviation, and
+the ~20x cnPINN-over-vanilla gain reproduces; the residual ~2x gap on cnPINN is
+consistent with the 3000-iteration budget and our Frobenius-norm penalty (the
+paper uses the matrix 2-norm). The hard-orthogonal variant matches cnPINN with
+the penalty and its weight removed — contribution C1 holds on the source
+paper's own benchmark. Training only the singular values beats dense on 4 of
+5 seeds but with high variance: the trained directions carry most of the
+gain, which bounds how cheap C2 can go.
+
+**Phase 1 matrix (`configs/main.yaml`)** launched 2026-08-25 on GPU 1;
+~14 min per strong-form run, ~8 h per benchmark block, 2–3 days total.
+First finished run: pinn/ca_circular_wet/seed0, L1(h) = 1.586e3 vs
+classical HLLC 3.914e2 at N = 128.

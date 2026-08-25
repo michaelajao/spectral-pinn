@@ -19,7 +19,14 @@ implements a variant of the paper's Eq. 15 (U frozen, V trained, unsquared
 matrix 1-norm penalty), so the comparison target is the paper's reported
 numbers, not a rerun of their code. We follow Eq. 15: w_U * ||U^T U - I||_2^2.
 
-Usage: python -m src.advection [--iters 3000] [--seeds 5] [--out reports/advection.md]
+With ``--diagnose`` the table also reports, per SVD layer of each trained
+model, the orthogonality defect D_U = ||U^T U - I||_2, the largest relative
+mismatch between the trained |s| and the singular values of the effective
+weight, and that weight's extreme singular values — i.e. whether the
+"singular values steered through diag(s)" mechanism holds after training.
+
+Usage: python -m src.advection [--iters 3000] [--seeds 5] [--modes svd_soft]
+                                [--w-U 2.857e-5] [--diagnose] [--out FILE]
 """
 
 from __future__ import annotations
@@ -104,9 +111,30 @@ def make_training_data(seed: int) -> dict[str, torch.Tensor]:
     return {"xu": xu, "tu": tu, "uu": exact(xu, tu), "xf": xf, "tf": tf_}
 
 
-def train_one(weight_param: str, seed: int, iters: int, w_U: float) -> float:
+def layer_diagnostics(model: AdvectionMLP) -> list[dict[str, float]]:
+    """Per SVD layer: D_U (2-norm), max relative |s|-vs-singular-value
+    mismatch, and the effective weight's largest/smallest singular values."""
+    rows = []
+    with torch.no_grad():
+        for m in (l for l in model.net if isinstance(l, SVDLinear)):
+            UtU = m.U.T @ m.U
+            eye = torch.eye(UtU.shape[0], dtype=UtU.dtype)
+            sv = torch.linalg.svdvals(m.weight())
+            s_abs = torch.sort(m.s.abs(), descending=True).values
+            rows.append({
+                "D_U": float(torch.linalg.matrix_norm(UtU - eye, ord=2)),
+                "sv_mismatch": float(((sv - s_abs).abs()
+                                      / sv.abs().clamp(min=1e-12)).max()),
+                "s_max": float(sv.max()),
+                "s_min": float(sv.min()),
+            })
+    return rows
+
+
+def train_one(weight_param: str, seed: int, iters: int, w_U: float
+              ) -> tuple[float, list[dict[str, float]]]:
     """Train one model with L-BFGS; return the L2 relative error on the
-    501 x 301 evaluation grid."""
+    501 x 301 evaluation grid and the per-layer diagnostics."""
     torch.manual_seed(seed)
     model = AdvectionMLP(weight_param)
     data = make_training_data(seed)
@@ -143,8 +171,8 @@ def train_one(weight_param: str, seed: int, iters: int, w_U: float) -> float:
         xt = torch.stack([X_.reshape(-1), T_.reshape(-1)], dim=1)
         u_pred = model(xt)
         u_true = exact(X_.reshape(-1), T_.reshape(-1))
-        return float(torch.linalg.norm(u_pred - u_true)
-                     / torch.linalg.norm(u_true))
+        err = float(torch.linalg.norm(u_pred - u_true) / torch.linalg.norm(u_true))
+    return err, layer_diagnostics(model)
 
 
 def main() -> None:
@@ -157,6 +185,8 @@ def main() -> None:
                    default=ROOT / "reports" / "advection_reproduction.md")
     p.add_argument("--modes", default=",".join(WEIGHT_PARAMS),
                    help="comma-separated subset of " + ",".join(WEIGHT_PARAMS))
+    p.add_argument("--diagnose", action="store_true",
+                   help="report D_U and singular-value mismatch per trained model")
     args = p.parse_args()
 
     labels = {"dense": "pinn (dense)", "svd_soft": "cnpinn (svd_soft)",
@@ -168,22 +198,35 @@ def main() -> None:
     entries = [(labels[m], m) for m in modes]
     rows = []
     for label, wp in entries:
-        errs = [train_one(wp, s, args.iters, args.w_U) for s in range(args.seeds)]
+        errs, diags = [], []
+        for s in range(args.seeds):
+            err, diag = train_one(wp, s, args.iters, args.w_U)
+            errs.append(err)
+            diags += diag
         m, sd = statistics.mean(errs), (statistics.pstdev(errs) if len(errs) > 1 else 0.0)
-        rows.append((label, m, sd, errs))
-        print(f"{label:22s} L2 rel err = {m:.3e} ± {sd:.1e}   {['%.1e' % e for e in errs]}",
-              flush=True)
+        summary = ""
+        if args.diagnose and diags:
+            summary = (f"D_U median {statistics.median(d['D_U'] for d in diags):.2e} "
+                       f"max {max(d['D_U'] for d in diags):.2e}; "
+                       f"sv-mismatch max {max(d['sv_mismatch'] for d in diags):.2e}; "
+                       f"s_max max {max(d['s_max'] for d in diags):.2f}; "
+                       f"s_min min {min(d['s_min'] for d in diags):.3f}")
+        rows.append((label, m, sd, errs, summary))
+        print(f"{label:22s} L2 rel err = {m:.3e} ± {sd:.1e}   {['%.1e' % e for e in errs]}"
+              + (f"\n{'':22s} {summary}" if summary else ""), flush=True)
 
     lines = ["# Advection reproduction (Wang et al. 2026, Sect. 4.1 setup)\n",
              f"3x25 tanh MLP, Xavier init, N_u=100, N_f=500 (LHS), L-BFGS "
              f"max_iter={args.iters}, w_U={args.w_U:.3e} for svd_soft, "
              f"{args.seeds} seeds. Published magnitudes: cnPINN ~1e-3, "
              f"vanilla PINN ~1e-2..1e-1 (their Figs. 5-7).\n",
-             "| entry | L2 rel. error (mean ± std) | per-seed |",
-             "|---|---|---|"]
-    for label, m, sd, errs in rows:
+             "| entry | L2 rel. error (mean ± std) | per-seed |"
+             + (" diagnostics |" if args.diagnose else ""),
+             "|---|---|---|" + ("---|" if args.diagnose else "")]
+    for label, m, sd, errs, summary in rows:
         lines.append(f"| {label} | {m:.3e} ± {sd:.1e} | "
-                     f"{', '.join('%.1e' % e for e in errs)} |")
+                     f"{', '.join('%.1e' % e for e in errs)} |"
+                     + (f" {summary} |" if args.diagnose else ""))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"wrote {args.out}")

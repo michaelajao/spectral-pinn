@@ -39,7 +39,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from .models import SVDLinear, WEIGHT_PARAMS, _make_linear
+from .models import SVDLinear, WEIGHT_PARAMS, _make_linear, layer_diagnostics
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -109,26 +109,6 @@ def make_training_data(seed: int) -> dict[str, torch.Tensor]:
     xf = X_RANGE[0] + (X_RANGE[1] - X_RANGE[0]) * lhs[:, 0]
     tf_ = T_RANGE[0] + (T_RANGE[1] - T_RANGE[0]) * lhs[:, 1]
     return {"xu": xu, "tu": tu, "uu": exact(xu, tu), "xf": xf, "tf": tf_}
-
-
-def layer_diagnostics(model: AdvectionMLP) -> list[dict[str, float]]:
-    """Per SVD layer: D_U (2-norm), max relative |s|-vs-singular-value
-    mismatch, and the effective weight's largest/smallest singular values."""
-    rows = []
-    with torch.no_grad():
-        for m in (l for l in model.net if isinstance(l, SVDLinear)):
-            UtU = m.U.T @ m.U
-            eye = torch.eye(UtU.shape[0], dtype=UtU.dtype)
-            sv = torch.linalg.svdvals(m.weight())
-            s_abs = torch.sort(m.s.abs(), descending=True).values
-            rows.append({
-                "D_U": float(torch.linalg.matrix_norm(UtU - eye, ord=2)),
-                "sv_mismatch": float(((sv - s_abs).abs()
-                                      / sv.abs().clamp(min=1e-12)).max()),
-                "s_max": float(sv.max()),
-                "s_min": float(sv.min()),
-            })
-    return rows
 
 
 def train_one(weight_param: str, seed: int, iters: int, w_U: float

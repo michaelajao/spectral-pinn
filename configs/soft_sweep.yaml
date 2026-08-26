@@ -1,0 +1,27 @@
+# Additive to the Phase 1 matrix, not a replacement. The matrix was launched
+# before the penalty was corrected to Wang et al.'s Eq. 15 (2-norm), so its
+# cnpinn_soft rows carry the Frobenius penalty; every other entry there is
+# unaffected, since only the soft variant reads that norm. This config reruns
+# the soft variant on the corrected code and brackets w_U by three orders of
+# magnitude, on the two benchmarks the matrix has already completed, so the
+# rows are directly comparable. It also answers, on shocks, the question the
+# advection diagnostic raised: does the trained U stay bounded but
+# non-orthogonal there too? (Each run now writes layer_diagnostics to
+# meta.json.)
+device: auto
+seeds: [0, 1, 2, 3, 4]
+entries:
+  - {name: soft_spectral_wU2.9e-5, kind: pinn, variables: primitive, weight_param: svd_soft, w_U: 2.857e-5}
+  - {name: soft_spectral_wU1e-3,   kind: pinn, variables: primitive, weight_param: svd_soft, w_U: 1.0e-3}
+  - {name: soft_spectral_wU1e-6,   kind: pinn, variables: primitive, weight_param: svd_soft, w_U: 1.0e-6}
+benchmarks:
+  - {id: ca_circular_wet, reference_n: 512, grid_n: 128}
+  - {id: ca_circular_dry, reference_n: 512, grid_n: 128}
+train:
+  iters: 20000
+  lr: 1.0e-3
+  grad_clip: 1.0
+  n_collocation: 20000
+  fvm_times: 41
+  fvm_nsub_max: 24
+  fvm_stochastic: true

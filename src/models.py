@@ -299,6 +299,34 @@ class PINN(nn.Module):
         return a, velocity(a, b), velocity(a, c)
 
 
+def layer_diagnostics(model: nn.Module) -> list[dict[str, float]]:
+    """Per SVD layer of a trained model: the orthogonality defect
+    D_U = ||U^T U - I||_2, the largest relative gap between the trained |s|
+    and the effective weight's singular values, and that weight's extreme
+    singular values.
+
+    These are the quantities that decide whether the cnPINN mechanism holds
+    after training: D_U near 0 with a small mismatch means diag(s) really is
+    the weight's spectrum; anything else means the reparameterization is
+    doing something other than spectral control.
+    """
+    rows = []
+    with torch.no_grad():
+        for lay in (l for l in model.net if isinstance(l, SVDLinear)):
+            UtU = lay.U.T @ lay.U
+            eye = torch.eye(UtU.shape[0], dtype=UtU.dtype, device=UtU.device)
+            sv = torch.linalg.svdvals(lay.weight())
+            s_abs = torch.sort(lay.s.abs(), descending=True).values
+            rows.append({
+                "D_U": float(torch.linalg.matrix_norm(UtU - eye, ord=2)),
+                "sv_mismatch": float(((sv - s_abs).abs()
+                                      / sv.abs().clamp(min=1e-12)).max()),
+                "s_max": float(sv.max()),
+                "s_min": float(sv.min()),
+            })
+    return rows
+
+
 # ==========================================================================
 # FVM-informed PINN
 # ==========================================================================

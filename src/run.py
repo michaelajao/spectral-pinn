@@ -20,6 +20,7 @@ Usage: python -m src.run [configs/smoke.yaml]
 from __future__ import annotations
 
 import functools
+import json
 import statistics
 import sys
 from dataclasses import asdict
@@ -37,6 +38,7 @@ from .metrics import (
 from .models import (
     FVMPINN, FVMPINNConfig, FVMResidualSpec, PINN, PINNConfig, Physics,
     data_anchor_loss, fvm_residual_loss, ic_anchor_loss, ic_loss, mse,
+    layer_diagnostics,
     pde_residual,
 )
 from .solver import Config, compute_dt, run
@@ -280,6 +282,14 @@ def main() -> None:
                     prov["n_gauge"] = entry.get("n_gauge", tr.get("n_gauge", 64))
                 with Timer(device) as tm:
                     train(model, loss_fn, tcfg, provenance=prov)
+                # what the spectral reparameterization looks like after
+                # training: D_U and whether diag(s) is still the spectrum
+                diags = layer_diagnostics(model) if hasattr(model, "net") else []
+                if diags:
+                    meta_path = out_dir / "meta.json"
+                    meta = json.loads(meta_path.read_text())
+                    meta["layer_diagnostics"] = diags
+                    meta_path.write_text(json.dumps(meta, indent=2, sort_keys=True))
                 m = ev(device)
                 m["train_time_s"] = tm.elapsed
                 results.setdefault((entry["name"], bid), []).append(m)

@@ -19,24 +19,37 @@ H^1-based theory formally excludes, is the project.
 
 ## Contributions
 
-**C1 — remove the penalty, not tune it.** Parameterize U on the orthogonal
-manifold (torch's built-in orthogonal parametrization, after Lezcano-Casado &
-Martínez-Rubio 2019), so U^T U = I holds to machine precision by
-construction, w_U ceases to exist, and the singular values of each hidden
-weight equal the trained diag(S) to round-off. This turns their Theorem 3.3
-bound into an identity. Implemented in
-`src/models.py` as `weight_param: svd_hard`; an augmented-Lagrangian soft
-version serves as the ablation baseline for the "adaptive w_U" reading of
-their limitation 1.
+**C1 — establish what the orthogonality penalty actually does.** Our
+diagnostic on their own advection case (20 seeds; `docs/roadmap.md`, Results
+log) shows the mechanism cnPINN is built on does not hold after training: at
+the published w_U = 1/35000 the trained U has ||U^T U - I||_2 close to 1 and
+is rank-deficient, and diag(s) differs from the effective weight's singular
+values by up to a factor of 13. Setting w_U = 0 lets U grow to a defect of
+about 60 and returns the error to worse than a plain MLP; constraining U to be
+exactly orthogonal (`weight_param: svd_hard`, no penalty and no w_U) is stable
+but reaches only 1.7e-2 median error against the weak penalty's 8.4e-3. The
+four regimes order as unconstrained (2e-1) < dense (7e-2) < exactly orthogonal
+(1.7e-2) < weakly penalized (8.4e-3). We therefore argue that the weak penalty
+acts as a bound on U's scale rather than as an orthogonality constraint, and
+that exact orthogonality over-constrains the problem. This reframes their
+stated limitation 1: the open question is not how to tune w_U adaptively but
+what constraint class the term belongs to. It also predicts that a bound
+weaker than orthogonality — a spectral-norm cap on U, or an explicit box on
+its singular values — should recover the full gain without a tuned penalty,
+which is the method we propose to develop and test.
 
-**C2 — cost.** The `svd_sigma` variant trains only the n singular values per
-layer (U, V frozen orthogonal): exact spectral control at n parameters per
-layer, the r -> 0 limit of their own cnPINN-r sweep, in which several r < N
-settings match or beat r = N (their Sect. 4.6.4, Fig. 20). Structurally this
-layer is identical to SVD-PINNs (Gao, Cheung & Ng, arXiv 2211.08760), which
-uses it for transfer from a trained model; the from-scratch use and the
-cost/accuracy frontier are what is new, and the paper must say so. Report a cost/accuracy frontier across dense, soft,
-hard, and sigma on identical budgets.
+**C2 — cost, and the limit of spectral-only training.** The `svd_sigma`
+variant trains only the n singular values per layer with U and V frozen
+orthogonal. On advection it reaches 3.29e-1 ± 5.5e-1 over 20 seeds, worse than
+the dense baseline with two diverged runs, so spectral-only training is not a
+viable cheap variant on this problem; the trained directions, not the trained
+spectrum, carry the gain. That is a negative result worth reporting, and it is
+consistent with C1: if the gain were spectral control, freezing orthogonal
+directions and training s would preserve it. Structurally this layer is the
+same as SVD-PINNs (Gao, Cheung & Ng, arXiv 2211.08760), which uses it to
+transfer from a trained model; the from-scratch use and the failure mode are
+what we add. The cost comparison across dense, soft, hard and sigma on
+identical budgets still stands as the answer to their limitation 2.
 
 **C3 — validation in the excluded regime.** The 2D dam-break suite ported
 from swe-dambreak: six initial-condition variants at the submitted paper's

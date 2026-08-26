@@ -21,6 +21,10 @@ effort alongside other work.
 
 - [x] Smoke run (`configs/smoke.yaml`) end-to-end on GPU (2026-08-25)
 - [ ] Full matrix (`configs/main.yaml`): 6 entries x 5 benchmarks x 5 seeds — running since 2026-08-25 on GPU 1 (logs/main.log)
+- [x] Reference data vendored (`data/`, 3 of the 6 IC variants) and read by
+      `src/benchmarks.py`; `src/run.py` cross-checks our HLLC reference against
+      the co-authors' schemes on every run
+      (`reports/reference_cross_check.md`)
 - [ ] Cost/accuracy frontier table (dense / soft / hard / sigma)
 - [ ] Augmented-Lagrangian soft variant as the adaptive-w_U ablation
 
@@ -44,6 +48,37 @@ effort alongside other work.
 - [ ] Draft; venue call (ASOC first choice) after Phase 1–2 results
 
 ## Results log
+
+**2026-08-26 — the reference has a resolution floor, and it varies by
+benchmark.** The co-authors' solver output for three of our IC variants is now
+vendored in `data/` and read by the harness, so our N = 512 HLLC reference can
+be checked against an independent solver family instead of only against
+itself. Table of record: `reports/reference_cross_check.md`.
+
+| benchmark | our classical @128 | vs their HLL | vs their MUSCL-RS | vanilla PINN |
+|---|---|---|---|---|
+| ca_circular_wet | 3.914e+02 | 3.111e+02 | 7.395e+02 | 1.602e+03 |
+| ca_gaussian | 6.357e+00 | 3.763e+02 | 3.949e+02 | ~3.9e+02 |
+| ca_step | 2.476e+02 | 2.169e+03 | 2.208e+03 | 1.028e+03 |
+
+All L1(h) at t = 2 s on the N = 128 evaluation grid; depth only, since their
+drop carries no momentum. Lax-Wendroff is the outlier on all three (3.4e+03 to
+9.3e+03) as expected of LW-with-artificial-viscosity on shocks.
+
+On `ca_circular_wet` the reference is vindicated — it agrees with their HLL
+more closely than our own N = 128 discretisation error, and both sit far below
+the PINN error, so margins between PINN variants there are real. On
+`ca_gaussian` the reference disagreement and the PINN error are the same
+number (3.8e+02 against 3.9e+02) while our own discretisation error is sixty
+times smaller, and on `ca_step` the two solver families differ by twice the
+PINN error. No ranking of neural entries on those two benchmarks survives a
+change of reference solver.
+
+This is a caveat on how the Phase 1 matrix may be read, not a retraction of
+it: the numbers are correct against the stated reference. It does mean the
+matrix's margins must be quoted against this floor, and it strengthens the
+case for C4 — a pointwise diagnostic does not depend on a domain-integrated
+comparison against any one reference.
 
 **2026-08-26 — Phase 0 gate, 20 seeds (supersedes the 5-seed tables).**
 Wang et al.'s advection case, L-BFGS 3000 iterations, their Eq. 15 penalty

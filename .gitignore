@@ -7,8 +7,14 @@ __pycache__/
 runs/
 logs/
 
-# external reference data (never committed)
-data/
+# External reference data. The tree stays ignored wholesale so a fresh drop
+# cannot be committed by accident; the three variants our benchmarks actually
+# use are re-included explicitly. See data/README.md.
+data/*
+!data/README.md
+!data/Variant 1 Step Dam-Break/
+!data/Variant 3 Circular Dam-Break/
+!data/Variant 4 Gaussian Dam-Break/
 
 # third-party reference code (cloned, not ours)
 third_party/

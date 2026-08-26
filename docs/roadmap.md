@@ -45,7 +45,12 @@ effort alongside other work.
 
 ## Phase 4 — writing (~3–4 weeks)
 
-- [ ] Draft; venue call (ASOC first choice) after Phase 1–2 results
+- [x] Draft skeleton with the results we have: `paper/main.tex` +
+      `paper/references.bib` (2026-08-26). Sections 4 and 5.3 carry real
+      numbers; the Gaussian and three-hump cells are marked [pending] and
+      every citation still needs verifying by hand. No LaTeX on this
+      machine — compile on Overleaf.
+- [ ] Venue call (ASOC first choice) after Phase 1–2 results
 
 ## Results log
 
@@ -87,7 +92,7 @@ Wang et al.'s advection case, L-BFGS 3000 iterations, their Eq. 15 penalty
 
 | entry | mean ± std | median | Wang et al. Table 5 (tanh) |
 |---|---|---|---|
-| vanilla PINN (dense) | 1.37e-1 ± 1.4e-1 | 7e-2 | (1.13 ± 1.67)e-1 |
+| vanilla PINN (dense) | 1.37e-1 ± 1.4e-1 | 8.4e-2 | (1.13 ± 1.67)e-1 |
 | cnPINN (svd_soft, w_U = 1/35000) | 1.46e-2 ± 1.5e-2 | 8.4e-3 | (5.64 ± 3.86)e-3 |
 | svd_hard (no penalty, no w_U) | 3.31e-2 ± 3.9e-2 | 1.7e-2 | — |
 | svd_sigma (singular values only) | 3.29e-1 ± 5.5e-1 | 1.2e-1 | — |
@@ -121,7 +126,7 @@ eigendirection of U^T U has collapsed — and diag(s) is not the weight's
 spectrum, so the mechanism the paper describes (singular values steered
 through diag(s) with U, V orthogonal) does not survive training. Removing the
 penalty lets U grow by two orders of magnitude and costs the entire gain.
-Ordering the four regimes by median error: unconstrained 2e-1, dense 7e-2,
+Ordering the four regimes by median error: unconstrained 2.1e-1, dense 8.4e-2,
 exactly orthogonal 1.7e-2, weakly penalized 8.4e-3. The penalty is doing
 something necessary, and it is bounding U rather than orthogonalizing it;
 exact orthogonality is a stronger constraint than the problem wants.

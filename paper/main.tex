@@ -1,0 +1,391 @@
+% ---------------------------------------------------------------------------
+% DRAFT. The dam-break matrix in Section 5 is still running (4 of 5 benchmarks
+% at the time of writing); cells marked [pending] are not yet measured. No
+% number in this file may be quoted outside the project until the run
+% completes and the citations in references.bib have been verified by hand.
+% No LaTeX toolchain on the development machine -- compile on Overleaf.
+% ---------------------------------------------------------------------------
+\documentclass[11pt]{article}
+
+\usepackage[english]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{authblk}
+
+\newcommand{\DU}{D}
+\newcommand{\wU}{w_U}
+
+\title{\textbf{Spectral weight control in physics-informed neural networks:
+what the orthogonality penalty does, and how it transfers to shock-dominated
+shallow-water flow}}
+
+\author[1]{Michael Ajao-Olarinoye}
+\author[2]{M. Asif Farooq}
+\affil[1]{Coventry University, UK}
+\affil[2]{National University of Sciences and Technology, Islamabad, Pakistan}
+
+\date{Draft --- \today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Wang et al.~\cite{wang2026cnpinn} improve physics-informed neural network
+accuracy by factorising each hidden weight at initialisation, training the
+left factor and the singular values in place of the weight, and penalising
+departures of the left factor from orthogonality with a hand-tuned weight
+$\wU$. Their account of why this works assigns the gain to control over the
+weight spectrum. We reproduce their advection case over 20 seeds and then
+measure the factors of the trained networks, which their paper does not
+report. At the published $\wU = 1/35000$ the trained left factor is not close
+to orthogonal --- $\|U^\top U - I\|_2$ has median $0.98$, indicating a
+collapsed eigendirection --- and the trained singular values differ from the
+effective weight's actual singular values by up to a factor of 13. The
+mechanism as described does not survive training. Constraining the factor to
+be exactly orthogonal, which removes $\wU$ entirely, is stable but reaches
+only $1.7\times10^{-2}$ median relative error against the penalty's
+$8.4\times10^{-3}$; removing the penalty from the same parameterisation lets
+the defect grow to a median of 63 and returns the error to
+$2.1\times10^{-1}$, worse than an unconstrained network's
+$8.4\times10^{-2}$. We read the term as a bound on the factor's scale rather
+than an orthogonality constraint, and exact orthogonality as over-constraining
+the problem. Transferring the comparison to two-dimensional shallow-water dam
+breaks, where the solution carries a shock and the bounded-gradient hypothesis
+of the source paper's Theorem 2.1 fails, no spectral variant separates from an
+unmodified network by more than about 10\% in $L^1$ depth error on the three
+benchmarks completed so far. In establishing that, we find that our own
+finite-volume reference disagrees with an independent solver family by more
+than the differences the comparison is trying to resolve on two of those three
+benchmarks, which sets a floor on what any such table can report.
+\end{abstract}
+
+\section{Introduction}
+
+Physics-informed neural networks solve a PDE by minimising its residual at
+collocation points~\cite{raissi2019pinn}. They fail on targets with steep or
+high-frequency structure, and a line of work attributes the failure to
+properties of the network's Jacobian. Wang et al.~\cite{wang2026cnpinn}
+formalise this through a quantity they call the condition number,
+$\kappa(f) = \|J(f)\|_F$, and propose a remedy: decompose each hidden weight
+$W_j = U_j S_j V_j^\top$ once at initialisation, freeze $V_j$, train $U_j$ and
+$\mathrm{diag}(S_j)$ in place of $W_j$, and add
+\begin{equation}
+  \wU \sum_j \DU_j^2, \qquad \DU_j = \|U_j^\top U_j - I\|_2
+  \label{eq:penalty}
+\end{equation}
+to the loss so that $U_j$ stays orthogonal and $\mathrm{diag}(S_j)$ therefore
+carries the weight's spectrum.
+
+Their conclusion lists three open problems. The penalty weight $\wU$ is tuned
+per equation across two and a half decades, from $1/600$ to $1/200000$ over
+five PDEs, and their Section 4.6.3 reports that NTK- and DB-PINN-style
+adaptive weighting diverges on this term because the penalty starts at exactly
+zero. The penalty costs 1.28 to 1.83 times vanilla training time across their
+width and collocation sweeps. All five validation problems are, in their own
+description, controlled synthetic examples, and all five are smooth.
+
+That last point has a specific consequence. Every hypothesis of their Theorem
+2.1 requires $u \in H^1$ with $\|J(u)\|_F$ bounded. A dam-break solution
+carries a shock, so $\|J(u)\|_F$ is unbounded and $u \notin H^1$: the theorem
+is formally inapplicable to the entire problem class. The authors say as much
+in a different context, noting that the condition is violated once training
+collapses.
+
+We take the three limitations in order and add the excluded regime. Section~4
+reproduces the advection case and then measures what the penalty does to the
+trained factors, which decides what kind of constraint the term is. Section~5
+moves the same four weight regimes to two-dimensional shallow-water dam
+breaks. Section~\ref{sec:refcheck} reports a result we did not set out to
+find: on two of three benchmarks the reference against which all of this is
+measured is less certain than the differences being measured.
+
+\section{The parameterisation and the four regimes compared}
+
+Write a hidden layer's weight as $W \in \mathbb{R}^{m\times n}$ and its
+initial factorisation as $W_0 = U_0 S_0 V_0^\top$. All four regimes below keep
+$V = V_0$ frozen and differ in how $U$ and the spectrum are treated.
+
+\begin{description}
+  \item[Unconstrained.] $W$ trained directly. The baseline.
+  \item[Penalised spectral.] $U$ and $s = \mathrm{diag}(S)$ trained, with
+    Eq.~\eqref{eq:penalty} added to the loss. This is the published method.
+  \item[Exactly orthogonal.] $U$ constrained to the Stiefel manifold by the
+    matrix-exponential parameterisation of Lezcano-Casado and
+    Mart\'inez-Rubio~\cite{lezcano2019orthogonal}, and $s$ trained. The
+    penalty and $\wU$ do not exist in this regime, which is what makes it the
+    direct test of the first stated limitation.
+  \item[Spectrum only.] $U$ and $V$ both frozen at their orthogonal initial
+    values, $s$ alone trained. Structurally this layer is the one used by
+    SVD-PINNs~\cite{gao2022svdpinn}; there it transfers a trained network to a
+    new equation, whereas here it is trained from scratch. The construction is
+    not ours and is not presented as new.
+\end{description}
+
+The distinction between the second and third regimes is the paper's pivot. If
+the penalty is an approximation to orthogonality, then enforcing orthogonality
+exactly should do at least as well and costs no tuned weight. If it is
+something else, the two will separate.
+
+Two nearby lines of work are worth separating from this one. Spectral
+normalisation~\cite{miyato2018spectral} divides a weight by its largest
+singular value to force a 1-Lipschitz map, which caps the gradient magnitude a
+network can express; the diagnostic motivating~\cite{wang2026cnpinn} says
+networks fail on steep targets by expressing too little of it, so the two have
+opposite intent even though both act on the spectrum. AL-PINNs~\cite{son2022alpinn}
+apply an augmented-Lagrangian treatment to the initial and boundary conditions,
+that is, to constraints on the solution rather than on weight structure; the
+same machinery is the natural route to an adaptive $\wU$ and is the mechanism
+we would use for a soft-constraint ablation.
+
+\section{Implementation}
+
+The penalty in Eq.~\eqref{eq:penalty} uses the matrix 2-norm, following the
+source paper. An early version of our code used the Frobenius norm, which at
+width 128 is up to 128 times stronger; the affected measurements are
+identified where they occur. All results here use L-BFGS at 3000 iterations
+for the advection case and Adam at $10^{-3}$ for 20000 iterations on the
+shallow-water cases. Seeds are set before model construction, so initial
+weights are reproducible.
+
+\section{Reproduction and mechanism on the advection case}
+
+\subsection{The gate}
+
+Table~\ref{tab:advection} repeats the source paper's Section 4.1 advection
+setup: a $3\times25$ tanh network, Xavier initialisation, 100 boundary and 500
+interior points by Latin hypercube sampling, L-BFGS to 3000 iterations,
+$\wU = 1/35000$. We report 20 seeds. Distributions in this problem are
+heavy-tailed --- the unconstrained network's worst seed is 53 times its best
+--- so the median is the more stable summary and both are given.
+
+\begin{table}[htbp]
+\centering
+\caption{Relative $L^2$ error on the advection case over 20 seeds. The first
+two rows are the comparison the source paper reports (their Table 5, tanh
+activation); the last three are regimes it does not test. Reproducing the
+published cells is what licenses reading the rest.}
+\label{tab:advection}
+\begin{tabular}{lccc}
+\toprule
+Regime & Mean $\pm$ s.d. & Median & Wang et al.\ Table 5 \\
+\midrule
+Unconstrained            & $(1.37\pm1.4)\times10^{-1}$ & $8.4\times10^{-2}$ & $(1.13\pm1.67)\times10^{-1}$ \\
+Penalised, $\wU=1/35000$ & $(1.46\pm1.5)\times10^{-2}$ & $8.4\times10^{-3}$ & $(5.64\pm3.86)\times10^{-3}$ \\
+Exactly orthogonal       & $(3.31\pm3.9)\times10^{-2}$ & $1.7\times10^{-2}$ & --- \\
+Spectrum only            & $(3.29\pm5.5)\times10^{-1}$ & $1.2\times10^{-1}$ & --- \\
+Same parameterisation, $\wU=0$ & $(3.37\pm3.5)\times10^{-1}$ & $2.1\times10^{-1}$ & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The two published cells reproduce within their reported spread, so the setup
+is faithful. Three readings follow from the rest. Exact orthogonality, which
+eliminates $\wU$, costs about a factor of two in median error against the
+tuned penalty. Training the spectrum alone is worse than an unconstrained
+network and diverges on 2 of 20 seeds, so the trained directions rather than
+the trained spectrum carry the gain --- a negative result for the cheap
+variant, and one that already sits awkwardly with a spectral explanation of
+the mechanism. Removing the penalty while keeping the parameterisation is the
+worst regime of the five.
+
+\subsection{What the penalty does to the trained factors}
+
+The source paper reports errors, not factor geometry. We measure, per
+factorised layer of trained networks over 3 seeds, the orthogonality defect
+$\DU = \|U^\top U - I\|_2$ and the largest relative gap between the trained
+$|s|$ and the singular values of the effective weight $USV^\top$
+(Table~\ref{tab:diagnostic}).
+
+\begin{table}[htbp]
+\centering
+\caption{Factor geometry after training, 3 seeds, median over layers. If the
+described mechanism held, $\DU$ would be near zero and the two spectra would
+coincide.}
+\label{tab:diagnostic}
+\begin{tabular}{lccc}
+\toprule
+Setting & Median error & Median $\DU$ & $|s|$ vs.\ true singular values \\
+\midrule
+$\wU = 1/35000$ & $7.9\times10^{-3}$ & $0.98$ & up to $13\times$ apart \\
+$\wU = 0$       & $3.05\times10^{-1}$ & $63$ (max 177) & up to $31\times$ apart \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+At the published weight $\DU \approx 1$, which for a defect measured in the
+2-norm means an eigendirection of $U^\top U$ has collapsed: the trained factor
+is rank-deficient, not near-orthogonal. The trained $s$ is not the effective
+weight's spectrum. Both premises of the stated mechanism fail, while the
+method's accuracy advantage holds.
+
+Ordering the four regimes by median error gives unconstrained-parameterised
+$2.1\times10^{-1}$, unconstrained $8.4\times10^{-2}$, exactly orthogonal
+$1.7\times10^{-2}$, weakly penalised $8.4\times10^{-3}$. The penalty is doing
+something the method needs; what it is doing is bounding the scale of $U$,
+since removing it lets the defect grow by two orders of magnitude and destroys
+the gain, while enforcing the constraint it nominally approximates recovers
+only about half of it. Exact orthogonality is a stronger constraint than the
+problem wants.
+
+This reframes the first stated limitation. The open question is not how to
+adapt $\wU$ but which constraint class the term belongs to, and the ordering
+above predicts that a bound weaker than orthogonality --- a spectral-norm cap
+on $U$, or an explicit box on its singular values --- should recover the gain
+without a tuned penalty. Testing that prediction is the next step, and it is
+not yet done.
+
+The evidence here is one smooth one-dimensional problem, one architecture and
+one optimiser. Whether the ordering survives on a shock is a separate
+question, which is what Section~5 asks.
+
+\section{Shallow-water dam breaks}
+
+\subsection{Setup}
+
+The benchmarks are two-dimensional dam breaks over a Gaussian-hump bed at the
+conventions of the comparative study of Zahra
+et al.~\cite{dambreak2026comparative}: domain $[0,100]^2$~m,
+$g = 2$~m/s$^2$, Manning $n = 0$, reflective walls on all four sides,
+$t_{\text{end}} = 2$~s. We use a step release, a circular column over a wet
+bed, the same column over a dry bed, and a smooth Gaussian mound. Errors are
+$L^1$ and $L^2$ of depth at the final output time on a shared $128^2$
+evaluation grid, against a reference computed in-process with an HLLC
+MUSCL--van Leer finite-volume scheme~\cite{toro2009riemann} at $512^2$ with
+hydrostatic reconstruction for well-balancing~\cite{audusse2004wellbalanced}.
+Baselines are an unmodified network, a Fourier-feature network --- the
+standard remedy for high-frequency targets, absent from the source paper's
+comparison --- and a finite-volume-informed network. Five seeds per cell.
+
+\subsection{Results}
+
+Table~\ref{tab:matrix} gives the three completed benchmarks. The spread across
+spectral variants is small: on the step release every entry but the
+FV-informed one lies between $1.03$ and $1.13\times10^3$, inside the
+seed-to-seed spread of the unconstrained baseline. No variant separates from
+an unmodified network by more than about 10\% in $L^1$ depth on any of the
+three, and the unconstrained network itself sits a factor of $4.1$ to $4.4$
+above a classical scheme run at the evaluation resolution.
+
+\begin{table}[htbp]
+\centering
+\caption{$L^1$ depth error at $t=2$~s on the $128^2$ evaluation grid, mean
+$\pm$ s.d.\ over 5 seeds. The classical row is HLLC MUSCL--van Leer at the
+evaluation resolution, not the reference. The penalised rows carry the
+Frobenius-norm penalty noted in Section 3, so they are stronger than
+Eq.~\eqref{eq:penalty} prescribes; every other row is unaffected.}
+\label{tab:matrix}
+\begin{tabular}{lccc}
+\toprule
+Entry & Circular, wet bed & Circular, dry bed & Step release \\
+\midrule
+Classical, $128^2$   & $3.914\times10^{2}$ & $3.798\times10^{2}$ & $2.476\times10^{2}$ \\
+Unconstrained        & $(1.602\pm0.012)\times10^{3}$ & $(1.681\pm0.076)\times10^{3}$ & $(1.028\pm0.11)\times10^{3}$ \\
+Fourier features     & $(1.681\pm0.11)\times10^{3}$ & $(1.838\pm0.12)\times10^{3}$ & $(1.124\pm0.068)\times10^{3}$ \\
+Penalised spectral   & $(1.662\pm0.12)\times10^{3}$ & $(1.602\pm0.054)\times10^{3}$ & $(1.106\pm0.047)\times10^{3}$ \\
+Exactly orthogonal   & $(1.725\pm0.13)\times10^{3}$ & $(1.507\pm0.14)\times10^{3}$ & $(1.054\pm0.071)\times10^{3}$ \\
+Spectrum only        & $(2.347\pm0.11)\times10^{3}$ & $(2.314\pm0.19)\times10^{3}$ & $(1.126\pm0.015)\times10^{3}$ \\
+FV-informed          & $(1.481\pm0.24)\times10^{4}$ & $(0.932\pm0.054)\times10^{4}$ & $(1.365\pm0.27)\times10^{4}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+One measurement does separate. On the dry-bed column the penalised network
+places the radial front at $3.5\pm4.1$~m from the reference position against
+the unconstrained network's $21.2\pm8.6$~m, with exact orthogonality at
+$24.2\pm14$~m. Front position is a local property of the shock, whereas $L^1$
+depth is integrated over the domain, so a variant can improve the first while
+leaving the second unchanged. Whether this survives the corrected penalty is
+being tested; the sweep bracketing $\wU$ over three decades on the corrected
+code is still running.
+
+The Gaussian mound and the three-hump friction case are [pending].
+
+\subsection{How far the reference can be trusted}
+\label{sec:refcheck}
+
+Every number in Table~\ref{tab:matrix} is measured against one solver's output.
+To find out what that is worth, we compare the reference against an
+independent implementation: the HLL, Lax--Wendroff and MUSCL--Rusanov runs
+produced for~\cite{dambreak2026comparative} on a $501^2$ node grid for the
+same initial conditions, interpolated onto the evaluation grid. Those runs
+store depth only, so the comparison is on depth.
+
+\begin{table}[htbp]
+\centering
+\caption{$L^1$ depth disagreement between our $512^2$ HLLC reference and three
+independently implemented schemes on the same initial condition, against our
+own discretisation error and the unconstrained network's error. Read down a
+column: where the middle entries exceed the last, the benchmark cannot resolve
+differences of the size Table~\ref{tab:matrix} reports.}
+\label{tab:crosscheck}
+\begin{tabular}{lccc}
+\toprule
+ & Circular, wet bed & Gaussian mound & Step release \\
+\midrule
+Our classical at $128^2$      & $3.914\times10^{2}$ & $6.357\times10^{0}$ & $2.476\times10^{2}$ \\
+\midrule
+vs.\ their HLL                & $3.111\times10^{2}$ & $3.763\times10^{2}$ & $2.169\times10^{3}$ \\
+vs.\ their MUSCL--Rusanov     & $7.395\times10^{2}$ & $3.949\times10^{2}$ & $2.208\times10^{3}$ \\
+vs.\ their Lax--Wendroff      & $7.551\times10^{3}$ & $3.435\times10^{3}$ & $9.349\times10^{3}$ \\
+\midrule
+Unconstrained network         & $1.602\times10^{3}$ & ${\sim}3.9\times10^{2}$ & $1.028\times10^{3}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three regimes appear. On the wet-bed column the reference is vindicated: it
+agrees with an independent HLL implementation to $3.11\times10^2$, tighter
+than its own $128^2$ discretisation error of $3.91\times10^2$, and both are
+far below the $1.60\times10^3$ network error. Differences between network
+variants on that benchmark are real. On the Gaussian mound the two solver
+families disagree by $3.76\times10^2$ and the network error is
+$3.9\times10^2$ --- the same number --- while our own discretisation error is
+sixty times smaller at $6.36$. On the step release the solver families differ
+by $2.2\times10^3$, twice the network error. No ranking of network variants on
+those two benchmarks survives a change of reference solver.
+
+Lax--Wendroff is the outlier throughout, which is expected of Lax--Wendroff
+with artificial viscosity at a shock and is a statement about that scheme
+rather than about ours. Nothing here says our reference is wrong; it is the
+most refined and least diffusive of the four, and on the wet-bed column it is
+confirmed. What it says is that a comparison table of this kind has a
+resolution floor that varies by benchmark, and that the floor has to be
+quoted next to any margin claimed from it. We have not seen this check
+performed in the PINN-for-conservation-laws literature, where a single
+fine-grid run is the usual reference.
+
+\section{Limitations}
+
+The dam-break matrix is incomplete, and its penalised rows carry the stronger
+Frobenius penalty rather than Eq.~\eqref{eq:penalty}. The factor-geometry
+measurement in Table~\ref{tab:diagnostic} uses 3 seeds on one problem. The
+constraint class predicted at the end of Section 4.2 --- a norm bound weaker
+than orthogonality --- is a prediction, not a result: it has not been
+implemented or tested. Five seeds per cell is enough to order entries that
+differ by a factor of two, not by 10\%, which is most of
+Table~\ref{tab:matrix}. Section~\ref{sec:refcheck} bounds what any of these
+comparisons can resolve and should be read before the others.
+
+\section{Conclusion}
+
+The orthogonality penalty of~\cite{wang2026cnpinn} is load-bearing and is not
+doing what the paper says it does. At the published weight the trained factor
+is rank-deficient rather than orthogonal, and the trained singular values are
+not the weight's spectrum, yet removing the penalty destroys the accuracy
+gain and enforcing exact orthogonality recovers only half of it. The term acts
+as a bound on the factor's scale. On shock-dominated shallow-water flow,
+outside the reach of the source paper's Theorem 2.1, none of the spectral
+regimes separates from an unmodified network by more than about 10\% in
+integrated depth error on the three benchmarks measured so far, with one local
+exception at the dry-bed front. Establishing that required checking the
+reference against an independent solver, which turned out to disagree with it
+by more than the differences under test on two of the three benchmarks.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

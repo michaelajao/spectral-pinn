@@ -39,12 +39,32 @@ validated against this data:
 - `b3_three_humps` and the rest of the B-series are synthetic cases defined
   only in `src/benchmarks.py`.
 
-## Status: not read by any code in this repo
+## How it is used
 
-Nothing here is loaded at runtime. Every error metric in `reports/` compares
-against an in-process HLLC reference built by `src/solver.py` at N = 512 —
-see the module docstring of `src/benchmarks.py`. This data is versioned for
-provenance and as the reference for a future cross-check against the
-collaborators' schemes; wiring it into the evaluation harness is still to do.
+`src/benchmarks.py` reads this tree; `DATA_ROOT` resolves from the module's
+own location (override with `SPECTRAL_PINN_DATA`), so it is correct whatever
+the working directory:
+
+```python
+from src.benchmarks import load_reference_depth, reference_depth_on
+h = load_reference_depth("ca_step", "MUSCLRS", t=2.0)      # (501, 501), [y, x]
+h_on_ours = reference_depth_on("ca_step", grid, 2.0, "HLL")  # (grid.ny, grid.nx)
+```
+
+`src/run.py` calls it automatically for every benchmark that has a
+counterpart, and writes a **Reference cross-check** section into the run's
+table: our in-process HLLC reference against each of their three schemes,
+depth only, at the final output time. That is solver-vs-solver disagreement,
+and it bounds how finely the neural rows can be read — a difference between
+two PINN variants smaller than the spread between reference schemes is not
+resolvable.
+
+It remains true that no *error metric for a neural entry* is computed against
+this data. Those still use the in-process HLLC reference at N = 512 built by
+`src/solver.py`; this tree is the independent check on that reference.
+
+The axis order ([y, x]) and the domain mapping are verified against the
+analytic IC in `tests/test_benchmarks.py` rather than assumed — a transposed
+or mis-registered read would fail those tests.
 
 45 files, 270 MB, float64 with ~18 significant digits per value.

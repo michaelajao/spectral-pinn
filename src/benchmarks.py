@@ -1,9 +1,14 @@
 """2D dam-break benchmark definitions (B1-B4 and the paper IC variants).
 
 Ported from ``swe-dambreak`` (benchmarks/cases.py), with the analytic
-initial-condition definitions folded in from its src/data/reference.py
-(the external reference-CSV machinery was not carried over: every
-experiment here builds its reference in-process with the HLLC solver).
+initial-condition definitions folded in from its src/data/reference.py.
+
+Two independent sources of truth live here. Every experiment builds its own
+reference in-process with the HLLC solver, which is what the error tables in
+reports/ are measured against. Separately, the bottom of this module reads
+the co-authors' vendored solver output in data/ (depth only, 501x501 nodes)
+so our solver can be cross-checked against theirs on the three IC variants
+both cover -- see data/README.md.
 
 Each builder returns a ``BenchmarkInstance`` at a requested resolution, so a
 sweep can run any scheme/limiter on it and a fine self-convergence reference
@@ -13,9 +18,13 @@ case; all fields are float64.
 
 from __future__ import annotations
 
+import functools
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
+import numpy as np
 import torch
 
 from .solver import (
@@ -324,3 +333,132 @@ def build(benchmark_id: str, n: int, device: Device = "cpu") -> BenchmarkInstanc
         raise KeyError(f"unknown benchmark '{benchmark_id}'; "
                        f"have {sorted(BENCHMARKS)}")
     return BENCHMARKS[benchmark_id](n, device)
+
+
+# --------------------------------------------------------------------------
+# vendored reference data: the co-authors' solver output for the same ICs
+#
+# Depth only, on a 501x501 *node* grid over [0,100]^2 (dx = dy = 0.2 m), five
+# snapshots to t = 2 s. Axis 0 is y, axis 1 is x -- verified against the
+# analytic IC by tests/test_benchmarks.py, not assumed. Momentum is absent
+# from the drop, so anything built on this compares h and nothing else.
+# --------------------------------------------------------------------------
+
+#: Location of the vendored data. Resolved from this file rather than the
+#: working directory, so `python -m src.run` and pytest agree no matter where
+#: they are invoked from; SPECTRAL_PINN_DATA points at an out-of-tree copy.
+DATA_ROOT = Path(
+    os.environ.get("SPECTRAL_PINN_DATA")
+    or Path(__file__).resolve().parents[1] / "data"
+)
+
+#: benchmark id -> the co-authors' variant directory for the same IC.
+#: Absent by design: ca_circular_dry sets h_out = 0 where their Variant 3 is
+#: wet (h_out = 1), and the B-series is synthetic. See data/README.md.
+REFERENCE_VARIANTS: dict[str, str] = {
+    "ca_step": "Variant 1 Step Dam-Break",
+    "ca_circular_wet": "Variant 3 Circular Dam-Break",
+    "ca_gaussian": "Variant 4 Gaussian Dam-Break",
+}
+
+REFERENCE_SCHEMES = ("HLL", "LW", "MUSCLRS")
+REFERENCE_TIMES = (0.0, 0.5, 1.0, 1.5, 2.0)
+REFERENCE_EXTENT = (0.0, 100.0, 0.0, 100.0)
+REFERENCE_NODES = 501
+
+
+def has_reference(benchmark_id: str) -> bool:
+    """Whether vendored co-author output exists for this benchmark's IC."""
+    return benchmark_id in REFERENCE_VARIANTS
+
+
+def reference_dir(benchmark_id: str, scheme: str) -> Path:
+    """Directory holding one scheme's snapshots for a benchmark's IC.
+
+    The drop's directory names are not formed by a single rule -- Variant 4's
+    HLL run is spelled ``gaussians`` where its LW and MUSCL-RS runs are
+    ``gaussian`` -- so match on the scheme suffix instead of building a name.
+    """
+    if not has_reference(benchmark_id):
+        raise KeyError(
+            f"no vendored reference for '{benchmark_id}'; "
+            f"have {sorted(REFERENCE_VARIANTS)} (see data/README.md)"
+        )
+    if scheme not in REFERENCE_SCHEMES:
+        raise ValueError(f"unknown scheme '{scheme}'; have {REFERENCE_SCHEMES}")
+    variant = DATA_ROOT / REFERENCE_VARIANTS[benchmark_id]
+    hits = sorted(variant.glob(f"solution_outputs_*_numerical_{scheme}"))
+    if not hits:
+        raise FileNotFoundError(
+            f"no '{scheme}' run under {variant}; is data/ present?"
+        )
+    if len(hits) > 1:
+        raise RuntimeError(f"ambiguous '{scheme}' runs under {variant}: {hits}")
+    return hits[0]
+
+
+def available_reference_schemes(benchmark_id: str) -> tuple[str, ...]:
+    """Schemes actually present on disk for this benchmark (possibly empty)."""
+    if not has_reference(benchmark_id):
+        return ()
+    out = []
+    for scheme in REFERENCE_SCHEMES:
+        try:
+            reference_dir(benchmark_id, scheme)
+        except (FileNotFoundError, RuntimeError):
+            continue
+        out.append(scheme)
+    return tuple(out)
+
+
+@functools.lru_cache(maxsize=None)
+def _load_csv(path: str) -> np.ndarray:
+    """Parse one snapshot. Cached: these are ~6 MB of ASCII and ~2 s each."""
+    a = np.loadtxt(path, delimiter=",")
+    if a.shape != (REFERENCE_NODES, REFERENCE_NODES):
+        raise ValueError(f"{path}: expected {REFERENCE_NODES}^2 nodes, got {a.shape}")
+    return a
+
+
+def load_reference_depth(
+    benchmark_id: str,
+    scheme: str = "MUSCLRS",
+    t: float = 2.0,
+    *,
+    device: Device = "cpu",
+) -> torch.Tensor:
+    """Co-author depth field at time ``t`` as a (501, 501) float64 tensor,
+    indexed [y, x] on the node grid spanning ``REFERENCE_EXTENT``."""
+    match = [s for s in REFERENCE_TIMES if abs(s - t) < 1e-9]
+    if not match:
+        raise ValueError(f"no snapshot at t={t}; have {REFERENCE_TIMES}")
+    path = reference_dir(benchmark_id, scheme) / f"h_t{match[0]:.1f}.csv"
+    if not path.exists():
+        raise FileNotFoundError(path)
+    return torch.from_numpy(_load_csv(str(path)).copy()).to(device)
+
+
+def reference_depth_on(
+    benchmark_id: str,
+    grid: Grid,
+    t: float = 2.0,
+    scheme: str = "MUSCLRS",
+) -> torch.Tensor:
+    """Co-author depth bilinearly sampled onto ``grid``'s cell centers,
+    shape (grid.ny, grid.nx) -- directly differenceable against our fields.
+
+    Their field is node-centered and ours is cell-centered, so this is a
+    node-to-center interpolation, not the center-to-center ``resample_to``
+    used elsewhere.
+    """
+    field = load_reference_depth(benchmark_id, scheme, t, device=str(grid.device))
+    x0, x1, y0, y1 = REFERENCE_EXTENT
+    gx = (grid.xc.to(field) - x0) / (x1 - x0) * 2 - 1
+    gy = (grid.yc.to(field) - y0) / (y1 - y0) * 2 - 1
+    GY, GX = torch.meshgrid(gy, gx, indexing="ij")
+    samp = torch.stack([GX, GY], dim=-1).unsqueeze(0)
+    out = torch.nn.functional.grid_sample(
+        field.reshape(1, 1, *field.shape), samp,
+        mode="bilinear", align_corners=True,
+    )
+    return out.reshape(grid.ny, grid.nx)

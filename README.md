@@ -23,6 +23,13 @@ src/metrics.py      error and diagnostic metrics
 src/run.py          config-driven experiment driver
 ```
 
+`data/` holds the co-authors' solver output (HLL / LW / MUSCL-RS at 501x501)
+for the three IC variants our benchmarks reproduce. Nothing there is used to
+score a neural entry — those errors are measured against an in-process HLLC
+reference at N = 512 — but `src/run.py` cross-checks that reference against
+their schemes and reports the disagreement, which sets the resolution floor
+for reading the comparison table. See `data/README.md`.
+
 ## Setup
 
 ```bash

@@ -96,3 +96,87 @@ def test_b3_has_bed_and_is_well_balanced_at_dry_rest():
     Uf = out["U"][-1]
     assert Uf[1].abs().max().item() < 1e-11
     assert Uf[2].abs().max().item() < 1e-11
+
+
+# --- vendored co-author reference data -------------------------------------
+
+from src.benchmarks import (  # noqa: E402
+    DATA_ROOT, REFERENCE_EXTENT, REFERENCE_NODES, available_reference_schemes,
+    has_reference, initial_depth, load_reference_depth, reference_depth_on,
+)
+
+REF_BIDS = ["ca_step", "ca_circular_wet", "ca_gaussian"]
+#: benchmark id -> the co-authors' IC variant number (data/README.md)
+REF_VARIANT = {"ca_step": 1, "ca_circular_wet": 3, "ca_gaussian": 4}
+
+needs_data = pytest.mark.skipif(
+    not DATA_ROOT.is_dir(), reason=f"vendored reference data absent ({DATA_ROOT})"
+)
+
+
+def _node_coords():
+    """The reference node grid: 501 nodes spanning [0,100] inclusive."""
+    x0, x1, _, _ = REFERENCE_EXTENT
+    c = torch.linspace(x0, x1, REFERENCE_NODES, dtype=torch.float64)
+    Y, X = torch.meshgrid(c, c, indexing="ij")   # axis 0 = y, axis 1 = x
+    return X, Y
+
+
+@needs_data
+@pytest.mark.parametrize("bid", REF_BIDS)
+def test_reference_t0_matches_analytic_ic(bid):
+    """t=0 of every scheme is the analytic IC, which pins the [y, x] axis
+    order and the domain mapping. Nodes sitting exactly on an IC discontinuity
+    disagree by O(1) through the reference solver's own inside/outside
+    rounding, so allow a small fraction of them (the source audit counts 2 of
+    251001 for circular, 1628 for gaussian)."""
+    X, Y = _node_coords()
+    expect = initial_depth(REF_VARIANT[bid], X, Y)
+    for scheme in available_reference_schemes(bid):
+        got = load_reference_depth(bid, scheme, 0.0)
+        diff = (got - expect).abs()
+        bad = diff > 1e-8
+        assert bad.float().mean() < 0.01, f"{bid}/{scheme}: {int(bad.sum())} nodes differ"
+        assert diff[~bad].max() <= 1e-8
+
+
+@needs_data
+def test_reference_axis_order_is_y_then_x():
+    """The step IC depends on x alone, so rows must be identical and columns
+    must carry the jump. Transposed data would fail this and nothing else."""
+    h = load_reference_depth("ca_step", "HLL", 0.0)
+    assert torch.allclose(h[0], h[-1])                 # no variation along y
+    assert h[:, 0].std() == 0 and h[0, 0] > h[0, -1]   # the jump is along x
+    assert int((h[0] > 5).sum()) == 251                # h = 10 for x <= 50
+
+
+@needs_data
+@pytest.mark.parametrize("bid", REF_BIDS)
+def test_reference_depth_on_grid(bid):
+    """Sampling onto our cell centers keeps shape, dtype and range."""
+    grid = Grid.from_extent(128, 128, REFERENCE_EXTENT)
+    src = load_reference_depth(bid, "MUSCLRS", 2.0)
+    got = reference_depth_on(bid, grid, 2.0, "MUSCLRS")
+    assert got.shape == (128, 128)
+    assert got.dtype == torch.float64
+    assert torch.isfinite(got).all()
+    # bilinear interpolation cannot leave the source's range
+    assert got.min() >= src.min() - 1e-12
+    assert got.max() <= src.max() + 1e-12
+
+
+@needs_data
+def test_reference_absent_for_dry_and_synthetic_cases():
+    """ca_circular_dry is ours (h_out = 0 vs their wet Variant 3) and the
+    B-series is synthetic; asking for either must fail loudly, not silently
+    hand back the wrong IC."""
+    assert not has_reference("ca_circular_dry")
+    assert not has_reference("b3_three_humps")
+    with pytest.raises(KeyError):
+        load_reference_depth("ca_circular_dry", "HLL", 0.0)
+
+
+@needs_data
+def test_reference_rejects_unknown_time():
+    with pytest.raises(ValueError):
+        load_reference_depth("ca_step", "HLL", 0.7)

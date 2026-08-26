@@ -31,9 +31,12 @@ print = functools.partial(print, flush=True)  # progress visible in piped logs
 import torch
 import yaml
 
-from .benchmarks import build
+from .benchmarks import (
+    available_reference_schemes, build, has_reference, reference_depth_on,
+)
 from .metrics import (
-    Timer, field_errors, radial_front_position, relative_mass_drift, resample_to,
+    Timer, field_errors, lp_error, radial_front_position, relative_mass_drift,
+    resample_to,
 )
 from .models import (
     FVMPINN, FVMPINNConfig, FVMResidualSpec, PINN, PINNConfig, Physics,
@@ -87,6 +90,29 @@ def evaluate_fields(pred_U_list, masses, eval_bi, ref_fields, wall_time):
         rr = radial_front_position(ref_fields[-1][0], grid, thr, eval_bi.center)
         row["front_err"] = abs(rp - rr)
     return row
+
+
+def reference_cross_check(bid, eval_bi, ref_fields):
+    """Our in-process HLLC reference against the co-authors' vendored output
+    for the same IC, at the final output time on the evaluation grid.
+
+    Depth only -- their drop carries h and no momentum (data/README.md). This
+    is solver-vs-solver agreement, not neural error: it bounds how finely the
+    neural rows can be read, since our own reference is only as good as the
+    schemes it agrees with. Silently returns nothing for benchmarks with no
+    counterpart (ca_circular_dry, the synthetic B-series).
+    """
+    if not has_reference(bid):
+        return {}
+    grid = eval_bi.grid
+    t = eval_bi.output_times[-1]
+    ours = ref_fields[-1][0]
+    out = {}
+    for scheme in available_reference_schemes(bid):
+        theirs = reference_depth_on(bid, grid, t, scheme).to(ours)
+        out[scheme] = {"L1_h": lp_error(ours, theirs, grid.dx, grid.dy, 1),
+                       "L2_h": lp_error(ours, theirs, grid.dx, grid.dy, 2)}
+    return out
 
 
 # ---- entry setup: return (model, loss_fn, evaluator, model_cfg) ------------
@@ -248,6 +274,7 @@ def main() -> None:
     global REF
     results: dict = {}          # (entry, bid) -> list of metric dicts per seed
     classical: dict = {}        # bid -> metrics
+    xcheck: dict = {}           # bid -> {scheme: {L1_h, L2_h}} vs co-authors
 
     for bspec in cfg["benchmarks"]:
         bid, ref_n, eval_n = bspec["id"], bspec["reference_n"], bspec["grid_n"]
@@ -256,6 +283,10 @@ def main() -> None:
         REF = ref_fields
         classical[bid] = classical_baseline(eval_bi, ref_fields, device)
         print(f"  classical HLLC-vanleer @N={eval_n}: L1_h={classical[bid]['L1_h']:.3e}")
+        xcheck[bid] = reference_cross_check(bid, eval_bi, ref_fields)
+        if xcheck[bid]:
+            print("  reference vs co-authors (L1 h): " + ", ".join(
+                f"{s_}={v['L1_h']:.3e}" for s_, v in xcheck[bid].items()))
 
         for entry in cfg["entries"]:
             if "only_benchmarks" in entry and bid not in entry["only_benchmarks"]:
@@ -297,7 +328,7 @@ def main() -> None:
                       f"train={tm.elapsed:.1f}s")
         # rewrite the table after every benchmark so a long matrix run that
         # dies part-way still leaves its finished rows on disk
-        write_report(cfg, results, classical, device, cfg_path)
+        write_report(cfg, results, classical, device, cfg_path, xcheck)
 
 
 def _agg(vals):
@@ -309,7 +340,7 @@ def _agg(vals):
     return f"{m:.3e} ± {s:.1e}"
 
 
-def write_report(cfg, results, classical, device, cfg_path):
+def write_report(cfg, results, classical, device, cfg_path, xcheck=None):
     """Write this run's raw table to reports/ml_runs/<config>_table.md.
 
     One file per config, named after it, so a run can never clobber another
@@ -344,6 +375,21 @@ def write_report(cfg, results, classical, device, cfg_path):
                      f"{_agg([r['L2_h'] for r in rs])} | "
                      f"{_agg([r['L1_speed'] for r in rs])} | "
                      f"{_agg([r['mass_drift'] for r in rs])} | {fr_s} |")
+
+    if xcheck and any(xcheck.values()):
+        L.append("\n## Reference cross-check\n")
+        L.append("Our in-process HLLC reference against the co-authors' solver "
+                 "output for the same IC (data/), depth only, at the final "
+                 "output time on the evaluation grid. Their drop carries no "
+                 "momentum, so there is no speed column. These numbers bound "
+                 "how finely the neural rows above can be read: differences "
+                 "smaller than the spread between reference schemes are not "
+                 "resolvable.\n")
+        L.append("| benchmark | scheme | L1(h) | L2(h) |")
+        L.append("|---|---|---|---|")
+        for bid in bids:
+            for scheme, v in (xcheck.get(bid) or {}).items():
+                L.append(f"| {bid} | {scheme} | {v['L1_h']:.3e} | {v['L2_h']:.3e} |")
 
     out = REPORTS / "ml_runs" / f"{Path(cfg_path).stem}_table.md"
     out.parent.mkdir(parents=True, exist_ok=True)

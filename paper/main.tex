@@ -19,9 +19,9 @@
 \newcommand{\DU}{D}
 \newcommand{\wU}{w_U}
 
-\title{\textbf{Spectral weight control in physics-informed neural networks:
-what the orthogonality penalty does, and how it transfers to shock-dominated
-shallow-water flow}}
+\title{\textbf{On the orthogonality penalty in spectrally parameterised
+physics-informed neural networks: factor geometry and transfer to
+shock-dominated flow}}
 
 \author[1]{Michael Ajao-Olarinoye}
 \author[2]{M. Asif Farooq}
@@ -413,8 +413,8 @@ heavy-tailed --- the unconstrained network's worst seed is 53 times its best
 \centering
 \caption{Relative $L^2$ error on the advection case over 20 seeds. The first
 two rows are the comparison the source paper reports (their Table 5, tanh
-activation); the last four are regimes it does not test. Reproducing the
-published cells is what licenses reading the rest.}
+activation); the last four are regimes it does not test. The two published cells are reproduced within
+their reported spread.}
 \label{tab:advection}
 \begin{tabular}{lccc}
 \toprule
@@ -430,25 +430,28 @@ Same parameterisation, $\wU=0$ & $(3.37\pm3.5)\times10^{-1}$ & $2.1\times10^{-1}
 \end{tabular}
 \end{table}
 
-The two published cells reproduce within their reported spread, so the setup
-is faithful. Three readings follow from the rest. Exact orthogonality, which
-eliminates $\wU$, costs about a factor of two in median error against the
-tuned penalty. Training the spectrum alone is worse than an unconstrained
-network and diverges on 2 of 20 seeds, so the trained directions rather than
-the trained spectrum carry the gain --- a negative result for the cheap
-variant, and one that already sits awkwardly with a spectral explanation of
-the mechanism. Removing the penalty while keeping the parameterisation is the
-worst regime bar the bounded one of Section~\ref{sec:bounded}.
+The two published cells are reproduced within their reported spread, which
+establishes that the setup is faithful. Three observations follow from the
+remaining rows. Exact orthogonality, which eliminates $\wU$, costs
+approximately a factor of two in median error relative to the tuned penalty.
+Training the spectrum alone is less accurate than an unconstrained network and
+diverges on 2 of 20 seeds, indicating that the trained directions rather than
+the trained spectrum carry the accuracy gain; this is already difficult to
+reconcile with a spectral account of the mechanism. Removing the penalty while
+retaining the parameterisation gives the second largest median error of the
+six, ahead only of the bounded parameterisation of
+Section~\ref{sec:bounded}.
 
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.75\textwidth]{fig_advection.pdf}
-\caption{Per-seed relative error on the advection case, 20 seeds per regime,
-log scale, ordered by median. The distributions are heavy-tailed and overlap
-heavily, which is why medians are quoted alongside means. Bounding
-$\sigma_{\max}(U)$ --- the weaker constraint predicted to substitute for the
-penalty --- is the worst regime, below even removing the penalty outright.}
+\caption{Relative $L^2$ error on the advection equation for each of the six
+weight parameterisations, 20 seeds each, on a logarithmic scale and ordered by
+median. Horizontal bars mark medians. The distributions are heavy-tailed and
+overlap substantially, so medians are reported alongside means throughout.
+Bounding $\sigma_{\max}(U)$, the weaker constraint of
+Section~\ref{sec:bounded}, gives the largest errors of the six.}
 \label{fig:advection}
 \end{figure}
 

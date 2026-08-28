@@ -69,43 +69,106 @@ usually report.
 
 \section{Introduction}
 
-Physics-informed neural networks solve a PDE by minimising its residual at
-collocation points~\cite{raissi2019pinn}. They fail on targets with steep or
-high-frequency structure, and a line of work attributes the failure to
-properties of the network's Jacobian. Wang et al.~\cite{wang2026cnpinn}
-formalise this through a quantity they call the condition number,
-$\kappa(f) = \|J(f)\|_F$, and propose a remedy: decompose each hidden weight
-$W_j = U_j S_j V_j^\top$ once at initialisation, freeze $V_j$, train $U_j$ and
-$\mathrm{diag}(S_j)$ in place of $W_j$, and add
+A physics-informed neural network represents the solution of a PDE by a network
+and trains it by minimising the residual of the equation at sampled collocation
+points, together with terms for the initial and boundary
+data~\cite{raissi2019pinn}. The appeal is that the same machinery handles
+forward and inverse problems, irregular geometries and partial data without a
+mesh. The difficulty, visible from the earliest applications, is that training
+often stalls on solutions with steep gradients or high-frequency content --- the
+regime where classical solvers are also hardest, and therefore the regime that
+would most justify the method.
+
+Several distinct explanations have been offered for that failure and each comes
+with its own remedy. Networks trained by gradient descent fit low frequencies
+before high ones~\cite{rahaman2019spectral}, which motivates input encodings
+that raise the frequency content the network can express cheaply: random Fourier
+features~\cite{tancik2020fourier} and periodic
+activations~\cite{sitzmann2020siren} are the standard instruments, and adaptive
+activation slopes are a lighter variant~\cite{jagtap2020adaptive}. A second
+account locates the problem in the loss rather than the architecture: residual
+and boundary terms have gradients of very different magnitude, so one term
+dominates and training converges to a solution that satisfies the wrong
+constraint. That reading has produced gradient-based
+rebalancing~\cite{wang2021gradient}, neural-tangent-kernel
+weighting~\cite{wang2022ntk}, self-adaptive pointwise
+weights~\cite{mcclenny2023selfadaptive} and augmented-Lagrangian treatments of
+the boundary conditions~\cite{son2022alpinn}. A third account, the one this
+paper is about, looks at the weights themselves.
+
+Wang et al.~\cite{wang2026cnpinn} propose a diagnostic and a remedy built on a
+quantity they call the condition number of the network,
+$\kappa(f) = \|J(f)\|_F$. The name invites confusion --- this is an absolute
+condition number, an $H^1$ seminorm of the gradient magnitude, and not the
+$\sigma_{\max}/\sigma_{\min}$ of numerical linear algebra --- but the
+construction is concrete. Each hidden weight is factorised once at
+initialisation as $W_j = U_j S_j V_j^\top$; $V_j$ is frozen; $U_j$ and
+$\mathrm{diag}(S_j)$ are trained in place of $W_j$; and the loss gains
 \begin{equation}
   \wU \sum_j \DU_j^2, \qquad \DU_j = \|U_j^\top U_j - I\|_2
   \label{eq:penalty}
 \end{equation}
-to the loss so that $U_j$ stays orthogonal and $\mathrm{diag}(S_j)$ therefore
-carries the weight's spectrum.
+so that $U_j$ is pushed toward orthogonality and $\mathrm{diag}(S_j)$ therefore
+carries the singular values of $W_j$. The stated mechanism is that the optimiser
+gains direct control of each layer's spectrum, which sets the Lipschitz scale
+the network can express, and that this is what helps on steep targets. Across
+five PDEs the method improves on a vanilla network by roughly an order of
+magnitude.
 
-Their conclusion lists three open problems. The penalty weight $\wU$ is tuned
-per equation across two and a half decades, from $1/600$ to $1/200000$ over
-five PDEs, and their Section 4.6.3 reports that NTK- and DB-PINN-style
-adaptive weighting diverges on this term because the penalty starts at exactly
-zero. The penalty costs 1.28 to 1.83 times vanilla training time across their
-width and collocation sweeps. All five validation problems are, in their own
-description, controlled synthetic examples, and all five are smooth.
+Their conclusion lists three open problems, and they are the starting point
+here. First, $\wU$ is tuned per equation across two and a half decades, from
+$1/600$ to $1/200000$, and their Section 4.6.3 reports that NTK- and
+DB-PINN-style adaptive weighting diverges on this particular term because the
+penalty begins at exactly zero, so the adapted weight grows without bound.
+Second, the penalty costs 1.28 to 1.83 times vanilla training time across their
+width and collocation sweeps. Third, all five validation problems are, in their
+own words, controlled synthetic examples, and all five are smooth.
 
-That last point has a specific consequence. Every hypothesis of their Theorem
-2.1 requires $u \in H^1$ with $\|J(u)\|_F$ bounded. A dam-break solution
-carries a shock, so $\|J(u)\|_F$ is unbounded and $u \notin H^1$: the theorem
-is formally inapplicable to the entire problem class. The authors say as much
-in a different context, noting that the condition is violated once training
-collapses.
+The third point has a consequence the paper does not draw. Every hypothesis of
+their Theorem 2.1 requires $u \in H^1$ with $\|J(u)\|_F$ bounded. A dam-break
+solution carries a shock, so $\|J(u)\|_F$ is unbounded and $u \notin H^1$: the
+theorem is formally inapplicable to the whole problem class, and the diagnostic
+that motivates the method is a quantity that does not exist there. The authors
+come close to saying so in another context, noting that the condition is
+violated once training fully collapses. Whether the \emph{method} still helps when
+its \emph{theory} does not apply is an empirical question, and it is the one that
+makes shock-dominated flow the informative test rather than merely a harder one.
 
-We take the three limitations in order and add the excluded regime.
-Section~\ref{sec:mechanism} reproduces the advection case and then measures
-what the penalty does to the trained factors, which decides what kind of
-constraint the term is. Section~\ref{sec:swe} moves the same weight regimes
-to two-dimensional shallow-water dam breaks.
-Section~\ref{sec:refcheck} reports a result we did not set out to find: on two of three benchmarks the reference against which all of this is
-measured is less certain than the differences being measured.
+This paper takes the three limitations in order and adds the excluded regime.
+Our results are largely negative, and we think the negative results are the
+useful part.
+
+\begin{itemize}
+  \item Reproducing the advection case over 20 seeds and then measuring the
+    trained factors --- which the source paper does not report --- shows that
+    the stated mechanism does not survive training. At the published $\wU$ the
+    trained $U$ is rank-deficient rather than near-orthogonal, and
+    $\mathrm{diag}(S)$ is not the effective weight's spectrum. The accuracy
+    gain is real; the explanation for it is not
+    (Section~\ref{sec:mechanism}).
+  \item Removing the penalty by constraining $U$ to be exactly orthogonal is
+    stable but recovers only about half the gain, and replacing it with a
+    bound on $U$'s largest singular value --- the weaker constraint that
+    reading suggests --- is the worst regime we tried
+    (Section~\ref{sec:bounded}).
+  \item On shock-dominated shallow-water dam breaks no spectral regime
+    separates from an unmodified network by more than about 10\% in integrated
+    depth error, and $\wU$ can be moved three decades without measurable
+    effect, so the tuning burden of the first limitation does not arise here
+    (Sections~\ref{sec:swe}, \ref{sec:sweep}). On the one smooth case in the
+    set, the constrained regimes are a factor of 2.5 \emph{worse} than an
+    unmodified network.
+  \item The overhead of the second limitation does not reproduce: the penalty
+    costs 3\%, while the penalty-free alternative that would replace it costs
+    42\%, so eliminating $\wU$ costs time rather than saving it
+    (Section~\ref{sec:cost}).
+  \item Establishing any of this required checking our finite-volume reference
+    against an independently implemented solver family. On two of three
+    benchmarks the two disagree by more than the differences the comparison is
+    trying to resolve (Section~\ref{sec:refcheck}). We report this at length
+    because a single fine-grid run is the usual reference in this literature
+    and its uncertainty is rarely quoted.
+\end{itemize}
 
 \section{The parameterisation and the regimes compared}
 
@@ -140,51 +203,94 @@ something else, the two will separate.
 \section{Related work}
 \label{sec:related}
 
-\paragraph{Spectral structure in network weights.}
-Spectral normalisation~\cite{miyato2018spectral} divides a weight by its
-largest singular value to force a 1-Lipschitz map. It acts on the same object
-as the method studied here and with the opposite intent: it caps the gradient
-magnitude a network can express, whereas the diagnostic
-motivating~\cite{wang2026cnpinn} holds that networks fail on steep targets by
-expressing too little of it. The exactly-orthogonal regime we test uses the
-matrix-exponential parametrisation of Lezcano-Casado and
-Mart\'inez-Rubio~\cite{lezcano2019orthogonal}, introduced for recurrent
-networks; we are not aware of a prior application to PINN training, and the
-result in Section~\ref{sec:mechanism} suggests why one might not have been
-reported. SVD-PINNs~\cite{gao2022svdpinn} freeze both orthogonal factors and
-retrain the singular values to move a trained network to a new equation. Our
-spectrum-only regime is that layer trained from scratch rather than
-transferred; the construction is theirs, and what we add is its failure mode
-as a from-scratch method.
+\paragraph{Where the failure is located.}
+The three accounts sketched in the introduction --- architecture, loss balance,
+weight structure --- are not exclusive, and the same benchmark often improves
+under all three. That makes attribution hard and is part of why this paper
+spends its effort on measurement rather than on a new variant. The
+architectural line treats the network's frequency response as the binding
+constraint and modifies the input encoding or the
+activation~\cite{tancik2020fourier, sitzmann2020siren, jagtap2020adaptive};
+we include a Fourier-feature network as a baseline throughout, because it is the
+standard remedy for exactly the steep targets~\cite{wang2026cnpinn} opens with
+and it is absent from that paper's comparison. A sine activation appears there
+only as an ablation of their own method, not as a SIREN baseline.
 
-\paragraph{Constraint handling in PINN losses.}
-AL-PINNs~\cite{son2022alpinn} apply an augmented-Lagrangian treatment to the
-initial and boundary conditions --- constraints on the solution, not on weight
-structure. The distinction matters here because the adaptive-weighting schemes
-that~\cite{wang2026cnpinn} report as diverging on their penalty are of this
-family, and the reason they diverge is specific to a penalty that starts at
-exactly zero.
+\paragraph{Loss balance and constraint handling.}
+The loss-weighting line rebalances terms whose gradients differ in
+magnitude~\cite{wang2021gradient, wang2022ntk, mcclenny2023selfadaptive}.
+AL-PINNs~\cite{son2022alpinn} instead treat the initial and boundary data as
+constraints and apply an augmented-Lagrangian method, replacing a fixed weight
+by a multiplier with an update rule. The distinction from the present work is
+what the constraint is placed on: those methods constrain the \emph{solution}
+the network represents, whereas the penalty studied here constrains the
+\emph{weights}. The distinction matters concretely, because it explains the
+failure~\cite{wang2026cnpinn} report in their Section 4.6.3: adaptive schemes
+from this family diverge on their penalty because it begins at exactly zero, a
+pathology specific to a constraint that is satisfied at initialisation by
+construction.
 
-\paragraph{PINNs at shocks.}
-A separate line accepts that pointwise residuals are ill-defined at a
-discontinuity and changes the objective or the architecture: weak- and
-entropy-form losses, jump conditions imposed through the architecture,
-gradient-weighted losses concentrated near shocks, and relaxation
-formulations. None of these measures or controls a property of the network's
-weights, so the comparison in Section~\ref{sec:swe} is orthogonal to them
-rather than competing with them; combining a spectral parametrisation with a
-weak-form loss is untested and outside what we report here. The shallow-water
-PINN literature specific to dam breaks is surveyed
-in~\cite{dambreak2026comparative}, from which our benchmarks and finite-volume
-harness are taken.
+\paragraph{Spectral structure in the weights.}
+Spectral normalisation~\cite{miyato2018spectral} divides each weight by its
+largest singular value to enforce a 1-Lipschitz map. It acts on the same object
+as the method studied here, with the opposite intent: it \emph{caps} the
+gradient magnitude the network can express, whereas the diagnostic motivating
+cnPINN holds that networks fail on steep targets by expressing too little of
+it. Our bounded regime (Section~\ref{sec:bounded}) is close to spectral
+normalisation in form, and the fact that it is the worst regime we tried is
+consistent with the two having opposite aims. Exactly-orthogonal weights are
+available through the matrix-exponential and Cayley parametrisations of
+Lezcano-Casado and Mart\'inez-Rubio~\cite{lezcano2019orthogonal}, introduced
+for recurrent networks where the motivation is gradient stability over long
+sequences; we are not aware of a prior application to PINN training.
+SVD-PINNs~\cite{gao2022svdpinn} use the same three-factor layer as our
+spectrum-only regime, freezing both orthogonal factors and retraining the
+singular values, but for transfer between equations rather than from-scratch
+training. The construction is theirs; what we add is its behaviour as a
+from-scratch method, which is poor.
+
+\paragraph{PINNs for hyperbolic problems and shocks.}
+A pointwise PDE residual is not defined at a discontinuity, so the line of work
+aimed at conservation laws changes the objective or the architecture rather
+than the weights. Weak and entropy formulations replace the strong residual
+with one that remains defined for discontinuous solutions and select the
+physically admissible weak solution~\cite{deryck2022wpinn}; other approaches
+impose jump conditions through the architecture, concentrate loss weight near
+detected shocks, or borrow relaxation formulations from the numerical-analysis
+literature. None of these measures or controls a property of the network's
+weights, so the comparison reported here is orthogonal to them rather than
+competing with them. Composing a spectral parametrisation with a weak-form loss
+is untested, and we do not test it: our finite-volume-informed baseline is a
+different composition, in which the residual is that of a discrete conservative
+update rather than of the differential equation.
+
+\paragraph{Shallow-water dam breaks.}
+The benchmark suite, the finite-volume harness and the surrounding
+shallow-water PINN literature come from the comparative study
+of~\cite{dambreak2026comparative}, which evaluates classical schemes and
+several PINN formulations on six initial-condition variants under identical
+conventions. That study supplies both the initial conditions we reproduce and,
+through its reference solver output, the independent implementation against
+which we check our own reference in Section~\ref{sec:refcheck}.
+
+\paragraph{Reference practice.}
+We found no comparable check in the PINN-for-conservation-laws literature. The
+standard is to compare against one fine-grid run of one scheme, or against an
+analytical solution where one exists, and to report neural errors to two or
+three significant figures without an uncertainty on the reference itself.
+Section~\ref{sec:refcheck} shows that on two of our three checkable benchmarks
+that uncertainty exceeds the differences being reported, which suggests the
+practice is worth revisiting beyond this paper.
 
 \paragraph{What we did not find.}
 A search in August 2026 returned no PINN work training weights under an exact
 orthogonality constraint, no condition-number or gradient-norm mismatch
 diagnostic for PINNs on hyperbolic problems, and no indexed citation
-of~\cite{wang2026cnpinn}, which appeared online two months earlier. The
-searches were run against arXiv-indexed material and are not exhaustive; the
-sweep needs repeating before submission.
+of~\cite{wang2026cnpinn}, which had appeared online two months earlier. The
+searches covered arXiv-indexed material and are not exhaustive --- in
+particular, a method published under different terminology for the same
+construction would not necessarily surface --- so the sweep needs repeating
+before submission.
 
 \section{Implementation}
 
@@ -338,11 +444,34 @@ scale is exactly what the cap provides, and it fails --- and $\DU$ is too coarse
 a summary to say what it is instead. Section~\ref{sec:mechanism}'s reading was
 underdetermined by its own evidence.
 
-The other half of the prediction --- a box holding every singular value of $U$
-in $[1-\varepsilon, 1+\varepsilon]$ --- follows from that reading and is
-untested. It is the constraint class that matches the measured behaviour, with
-$\varepsilon$ a geometrically interpretable knob in place of a loss weight on
-an unnormalised penalty, and it is the experiment we would run next.
+The other half of the prediction is a box holding every singular value of $U$
+in $[1-\varepsilon, 1+\varepsilon]$: the constraint class that matches the
+measured behaviour, with $\varepsilon$ a geometric knob that recovers exact
+orthogonality at $\varepsilon = 0$ and the unconstrained parameterisation as
+$\varepsilon$ grows, in place of a loss weight on an unnormalised penalty. We
+implemented it as a projection and could not train it under this paper's
+protocol, for a reason worth recording. The projection is exact --- the
+constrained networks have every singular value inside the box to five decimal
+places --- but its Jacobian is ill-conditioned precisely where the layer
+operates: differentiating through the singular value decomposition introduces
+$1/(\sigma_i^2 - \sigma_j^2)$ terms, and the box holds every $\sigma_i$ near 1.
+The exact gradient produced non-finite values within a few hundred iterations.
+A straight-through estimator is stable and keeps the constraint, but its
+gradient disagrees with the function value, and L-BFGS with a strong-Wolfe line
+search then makes almost no progress: over 300 iterations the loss falls from
+$2.91\times10^{-1}$ to $2.76\times10^{-1}$, against $1.82\times10^{-1}$ for the
+exactly-orthogonal regime from the same initialisation. We report this as an
+open implementation problem rather than as evidence about the constraint class,
+which it is not.
+
+The difficulty is itself relevant to the paper's subject. A soft penalty is
+differentiable everywhere and costs one matrix norm per layer; the hard
+constraint it nominally approximates is a projection whose exact derivative is
+singular on the set where the constraint binds. That asymmetry is a practical
+reason for the source paper's design that its own discussion does not give, and
+it is a better argument for the penalty than the mechanism the paper offers.
+Whether a first-order optimiser tolerates the straight-through estimator well
+enough to make the box trainable is untested; that is the next thing to try.
 
 The evidence here is one smooth one-dimensional problem, one architecture and
 one optimiser. Whether the ordering survives on a shock is a separate

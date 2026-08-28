@@ -58,6 +58,7 @@ class AdvectionMLP(nn.Module):
     output layers stay dense, as in Wang et al.'s Algorithm 1)."""
 
     def __init__(self, weight_param: str = "dense", hidden: int = 25,
+                 box_eps: float = 0.1,
                  n_hidden: int = 3):
         super().__init__()
         if weight_param not in WEIGHT_PARAMS:
@@ -67,6 +68,7 @@ class AdvectionMLP(nn.Module):
             _make_linear(2, hidden, weight_param, "xavier", reparam=False), act()]
         for _ in range(n_hidden - 1):
             layers += [_make_linear(hidden, hidden, weight_param, "xavier",
+                                    box_eps=box_eps,
                                     reparam=True), act()]
         layers += [_make_linear(hidden, 1, weight_param, "xavier", reparam=False)]
         self.net = nn.Sequential(*layers)
@@ -111,12 +113,13 @@ def make_training_data(seed: int) -> dict[str, torch.Tensor]:
     return {"xu": xu, "tu": tu, "uu": exact(xu, tu), "xf": xf, "tf": tf_}
 
 
-def train_one(weight_param: str, seed: int, iters: int, w_U: float
+def train_one(weight_param: str, seed: int, iters: int, w_U: float,
+              box_eps: float = 0.1
               ) -> tuple[float, list[dict[str, float]]]:
     """Train one model with L-BFGS; return the L2 relative error on the
     501 x 301 evaluation grid and the per-layer diagnostics."""
     torch.manual_seed(seed)
-    model = AdvectionMLP(weight_param)
+    model = AdvectionMLP(weight_param, box_eps=box_eps)
     data = make_training_data(seed)
 
     opt = torch.optim.LBFGS(model.parameters(), max_iter=iters,
@@ -165,13 +168,17 @@ def main() -> None:
                    default=ROOT / "reports" / "advection_reproduction.md")
     p.add_argument("--modes", default=",".join(WEIGHT_PARAMS),
                    help="comma-separated subset of " + ",".join(WEIGHT_PARAMS))
+    p.add_argument("--box-eps", type=float, default=0.1,
+                   help="svd_box half-width: sigma(U) constrained to [1-eps, 1+eps]")
     p.add_argument("--diagnose", action="store_true",
                    help="report D_U and singular-value mismatch per trained model")
     args = p.parse_args()
 
     labels = {"dense": "pinn (dense)", "svd_soft": "cnpinn (svd_soft)",
               "svd_hard": "ortho (svd_hard)", "svd_sigma": "sigma (svd_sigma)",
-              "svd_bounded": "bounded (svd_bounded)"}
+              "svd_bounded": "bounded (svd_bounded)",
+              "svd_box": "box (svd_box)"}
+    labels["svd_box"] = f"box eps={args.box_eps:g} (svd_box)"
     modes = [m.strip() for m in args.modes.split(",") if m.strip()]
     unknown = [m for m in modes if m not in WEIGHT_PARAMS]
     if unknown:
@@ -181,7 +188,7 @@ def main() -> None:
     for label, wp in entries:
         errs, diags = [], []
         for s in range(args.seeds):
-            err, diag = train_one(wp, s, args.iters, args.w_U)
+            err, diag = train_one(wp, s, args.iters, args.w_U, args.box_eps)
             errs.append(err)
             diags += diag
         m, sd = statistics.mean(errs), (statistics.pstdev(errs) if len(errs) > 1 else 0.0)

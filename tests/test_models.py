@@ -294,3 +294,31 @@ def test_svd_layers_train_under_lbfgs():
 def test_xavier_init_option():
     m = PINN(PINNConfig(hidden=16, layers=2, init="xavier"))
     assert m.forward(torch.rand(4, 3))[0].shape == (4,)
+
+
+def test_svd_box_enforces_the_constraint_and_spans_hard_to_free():
+    """eps = 0 must reproduce exact orthogonality and larger eps must widen the
+    admissible spectrum, since that interpolation is the point of the layer."""
+    from src.models import SVDLinear
+    for eps in (0.0, 0.1, 0.5):
+        torch.manual_seed(0)
+        layer = SVDLinear(24, 24, mode="svd_box", init="xavier", box_eps=eps)
+        with torch.no_grad():   # push the raw parameter far outside the box
+            layer.parametrizations.U.original.mul_(6.0).add_(torch.randn(24, 24))
+        sv = torch.linalg.svdvals(layer.U)
+        assert sv.min() >= 1.0 - eps - 1e-4
+        assert sv.max() <= 1.0 + eps + 1e-4
+
+
+def test_svd_box_gradients_stay_finite():
+    """The exact projection Jacobian is singular where the box binds (all
+    singular values near 1), so the layer uses a straight-through estimator;
+    this pins that the backward pass produces usable numbers."""
+    from src.models import SVDLinear
+    torch.manual_seed(0)
+    layer = SVDLinear(24, 24, mode="svd_box", init="xavier", box_eps=0.1)
+    with torch.no_grad():
+        layer.parametrizations.U.original.mul_(6.0)
+    layer(torch.randn(8, 24)).sum().backward()
+    g = layer.parametrizations.U.original.grad
+    assert torch.isfinite(g).all() and g.abs().sum() > 0

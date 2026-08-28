@@ -33,6 +33,13 @@ dense weights.
   svd_sigma   train only s with U and V^T frozen at their orthogonal initial
               values: n trainable parameters per layer, exact spectral
               control, the cheapest member of the family.
+  svd_box     all singular values of U held in [1-eps, 1+eps] by projection
+              (``box_eps``). eps -> 0 recovers svd_hard exactly and large eps
+              recovers the unconstrained parameterization, so eps is a single
+              geometric knob spanning the two, in place of a loss weight on an
+              unnormalized penalty. This is the constraint class the svd_bounded
+              failure points to: svd_bounded fixes only sigma_max and lets the
+              rest collapse, which is what made it useless.
   svd_bounded the constraint the advection diagnostic points to: train U and s
               with U rescaled every forward pass so its largest singular value
               is 1, which bounds U's scale without forcing its other singular
@@ -67,7 +74,8 @@ from .solver import Config, pad_scalar, step, velocity
 _ACT = {"tanh": nn.Tanh, "gelu": nn.GELU, "silu": nn.SiLU}
 
 #: Weight-reparameterization modes accepted by PINNConfig.weight_param.
-WEIGHT_PARAMS = ("dense", "svd_soft", "svd_hard", "svd_sigma", "svd_bounded")
+WEIGHT_PARAMS = ("dense", "svd_soft", "svd_hard", "svd_sigma", "svd_bounded",
+                 "svd_box")
 
 
 class FourierFeatures(nn.Module):
@@ -121,6 +129,53 @@ class _SpectralCap(nn.Module):
         return U
 
 
+class _SpectralBox(nn.Module):
+    """Project a matrix so every singular value lies in ``[1-eps, 1+eps]``.
+
+    Interpolates between the two regimes that bracket the question: ``eps = 0``
+    is exact orthogonality, large ``eps`` is unconstrained. Unlike
+    ``_SpectralCap`` it constrains the *whole* spectrum, which is the property
+    the cap was missing.
+
+    The projection runs an SVD each forward pass. Gradients through
+    ``torch.linalg.svd`` are ill-conditioned when singular values coincide, and
+    here they are all near 1 by construction, so the backward pass is the part
+    to watch; ``tests/test_models.py`` pins that it stays finite.
+    """
+
+    def __init__(self, eps: float = 0.1):
+        super().__init__()
+        self.eps = float(eps)
+
+    def forward(self, U: torch.Tensor) -> torch.Tensor:
+        # Straight-through projection: the forward value is exactly the
+        # projected matrix, the backward pass is the identity in U.
+        #
+        # Two alternatives were tried and rejected. Differentiating through
+        # torch.linalg.svd introduces 1/(s_i^2 - s_j^2) terms, and this layer
+        # operates where every singular value is near 1, so the backward pass
+        # produced non-finite values and killed the run. Detaching the
+        # rotations and letting the gradient reach only the singular values
+        # trains stably but leaves U's directions frozen, which is a different
+        # method (and a bad one: it scored a relative error of 1.0). The
+        # straight-through estimator keeps gradient flowing to all of U.
+        #
+        # The scale normalisation is also load-bearing: clamp() has zero
+        # gradient once every singular value sits outside the box, so without
+        # it the unconstrained parameter drifts freely and eventually
+        # overflows. A matrix with all singular values 1 has Frobenius norm
+        # sqrt(min(m, n)).
+        k = min(U.shape) ** 0.5
+        U = U * (k / U.norm().clamp_min(1e-12))
+        with torch.no_grad():
+            Q, S, Vh = torch.linalg.svd(U, full_matrices=False)
+            projected = (Q * S.clamp(1.0 - self.eps, 1.0 + self.eps)) @ Vh
+        return U + (projected - U).detach()
+
+    def right_inverse(self, U: torch.Tensor) -> torch.Tensor:
+        return U
+
+
 class SVDLinear(nn.Module):
     """Linear layer trained through the SVD factors of its initial weight.
 
@@ -137,9 +192,10 @@ class SVDLinear(nn.Module):
 
     def __init__(self, in_features: int, out_features: int, mode: str,
                  init: str = "default", bias: bool = True,
-                 defect_norm: str = "spectral"):
+                 defect_norm: str = "spectral", box_eps: float = 0.1):
         super().__init__()
-        if mode not in ("svd_soft", "svd_hard", "svd_sigma", "svd_bounded"):
+        if mode not in ("svd_soft", "svd_hard", "svd_sigma", "svd_bounded",
+                        "svd_box"):
             raise ValueError(f"unknown SVDLinear mode '{mode}'")
         if defect_norm not in ("spectral", "frobenius"):
             raise ValueError(f"unknown defect_norm '{defect_norm}'")
@@ -169,6 +225,10 @@ class SVDLinear(nn.Module):
                 parametrizations.orthogonal(self, "U")
             elif mode == "svd_bounded":
                 parametrize.register_parametrization(self, "U", _SpectralCap())
+            elif mode == "svd_box":
+                self.box_eps = float(box_eps)
+                parametrize.register_parametrization(
+                    self, "U", _SpectralBox(self.box_eps))
 
         if bias:
             self.bias = nn.Parameter(torch.empty(out_features))
@@ -203,7 +263,8 @@ class SVDLinear(nn.Module):
 
 
 def _make_linear(in_f: int, out_f: int, weight_param: str, init: str,
-                 *, reparam: bool, defect_norm: str = "spectral") -> nn.Module:
+                 *, reparam: bool, defect_norm: str = "spectral",
+                 box_eps: float = 0.1) -> nn.Module:
     """A hidden-stack layer: SVD-reparameterized iff requested AND eligible.
 
     Only square hidden->hidden layers are reparameterized (``reparam=True``);
@@ -211,7 +272,7 @@ def _make_linear(in_f: int, out_f: int, weight_param: str, init: str,
     """
     if reparam and weight_param != "dense":
         return SVDLinear(in_f, out_f, mode=weight_param, init=init,
-                         defect_norm=defect_norm)
+                         defect_norm=defect_norm, box_eps=box_eps)
     lin = nn.Linear(in_f, out_f)
     _init_weight(lin.weight, init)
     if init == "xavier":
@@ -235,6 +296,7 @@ class PINNConfig:
     softplus_h: bool = False           # hard-enforce h>=0 (off for honest baseline)
     weight_param: str = "dense"        # see WEIGHT_PARAMS
     defect_norm: str = "spectral"      # "spectral" (paper Eq. 15) | "frobenius"
+    box_eps: float = 0.1               # svd_box half-width: sigma(U) in [1-eps, 1+eps]
     init: str = "default"              # "default" | "xavier"
     # input normalization bounds (x, y, t); set from the case domain
     x_range: tuple[float, float] = (0.0, 1.0)
@@ -274,7 +336,8 @@ class PINN(nn.Module):
             layers += [
                 _make_linear(cfg.hidden, cfg.hidden, cfg.weight_param,
                              cfg.init, reparam=True,
-                             defect_norm=cfg.defect_norm),
+                             defect_norm=cfg.defect_norm,
+                             box_eps=cfg.box_eps),
                 act(),
             ]
         layers += [_make_linear(cfg.hidden, 3, cfg.weight_param, cfg.init,

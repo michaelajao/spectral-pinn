@@ -54,6 +54,27 @@ effort alongside other work.
 
 ## Results log
 
+**2026-08-26 — the singular-value box: implemented, not trainable under
+L-BFGS.** `svd_box` holds every sigma_i(U) in [1-eps, 1+eps] (eps = 0 is
+svd_hard, large eps is unconstrained). The constraint is exact — trained
+networks sit inside the box to five decimals, and D_U = 0.21 at eps = 0.1 is
+exactly (1+eps)^2 - 1 — but it will not train on the advection protocol.
+
+Differentiating through torch.linalg.svd gives 1/(s_i^2 - s_j^2) terms and the
+box holds every s_i near 1, so the exact gradient goes non-finite within a few
+hundred L-BFGS iterations. Detaching the rotations is stable but freezes U's
+directions (error 1.0 — a different, bad method). A straight-through estimator
+keeps the constraint and all the gradient, but disagrees with the function
+value, and L-BFGS's strong-Wolfe line search then stalls: loss 2.91e-1 ->
+2.76e-1 over 300 iterations against svd_hard's 1.82e-1 from the same init.
+
+Recorded as an open implementation problem, NOT as evidence about the
+constraint class. Next thing to try is Adam, which tolerates inconsistent
+gradients where L-BFGS does not. The difficulty is itself an argument for why
+the source paper uses a soft penalty: it is differentiable everywhere, whereas
+the hard constraint it approximates has a singular derivative exactly where it
+binds.
+
 **2026-08-26 — the predicted constraint fails, and the diagnostic that
 explains why.** `svd_bounded` pins sigma_max(U) = 1 and leaves the rest of U's
 spectrum free: strictly weaker than svd_hard, no penalty, no w_U, and it admits

@@ -314,11 +314,27 @@ mechanism the method is built on, and Eq.~\eqref{eq:penalty} is what is
 supposed to keep $U$ close enough to orthogonal for it to hold. Whether it does
 is the question of Section~\ref{sec:mechanism}.
 
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{fig_schematic.pdf}
+\caption{(Color online) (A) Each square hidden weight is factorised once, at
+initialisation, into $U S V^{\!\top}$; $V$ is then held fixed and the effective
+weight is rebuilt from the stored factors on every forward pass. (B) The
+constraint each parameterisation places on the singular values of $U$. Exact
+orthogonality admits the single point $\sigma_i = 1$; the penalised
+parameterisation admits any spectrum but attaches a cost that grows with the
+distance from that point; bounding $\sigma_{\max}$ admits the whole interval
+$[0,1]$, which includes rank-deficient factors.}
+\label{fig:schematic}
+\end{figure}
+
 \subsection{Weight parameterisations compared}
 
 Five parameterisations of the hidden layers are compared. They share
 Eq.~\eqref{eq:factor} and keep $V = V_0$ frozen, and differ in what is trained
-and in what constrains $U$. Table~\ref{tab:regimes} summarises them.
+and in what constrains $U$. Fig.~\ref{fig:schematic} shows the construction and
+the admissible spectrum of $U$ in each case; Table~\ref{tab:regimes}
+summarises them.
 
 In the unconstrained case the weight $W$ is trained directly, without
 factorisation; this is the vanilla network and serves as the baseline. The
@@ -612,6 +628,39 @@ entry but the finite-volume-informed one falls between $1.03$ and
 $1.13\times10^3$, inside the unconstrained baseline's own seed spread. The
 unconstrained network sits a factor of $4.1$ to $4.4$ above a classical scheme
 at the same resolution.
+
+Fig.~\ref{fig:shock} resolves that summary on the circular dam break. The
+reference at $t = 2$~s consists of an outward-travelling bore near $x = 22$~m
+and $x = 78$~m, a rarefaction behind it, and a plateau whose crest carries a
+shallow depression left by the Gaussian bed. Panels (B)--(D) show that all
+three parameterisations reproduce the gross structure; panels (E) and (F) show
+where they do not. Two error modes dominate and are common to all three. The
+bore is displaced and smeared, producing deviations of $-2$~m at the two front
+positions against $-1.0$~m for a classical scheme at the evaluation resolution.
+Behind it the networks return a flat crest near $10.2$~m where the reference
+has a depression near $9.6$~m, giving a broad $+1.3$~m deviation across
+$40 < x < 60$~m. The classical scheme at $128^2$ captures the depression and
+deviates only at the fronts.
+
+Neither error mode responds to the parameterisation. The three curves in panel
+(F) lie within a few centimetres of one another over most of the domain and
+differ visibly only in the immediate neighbourhood of the bore. What limits a
+strong-form network on this problem is therefore not a property that the weight
+spectrum controls.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{fig_shock.pdf}
+\caption{(Color online) Circular dam break over a wet bed at $t = 2$~s, seed 0,
+on the $128^2$ evaluation grid. (A) HLLC reference at $N = 512$; (B)--(D) the
+unconstrained, penalised spectral and exactly orthogonal networks. The dashed
+line marks the centreline sampled below. (E) Depth along $y = 50$~m, with a
+classical HLLC scheme at the evaluation resolution for comparison. (F) The same
+profiles as deviations from the reference. The networks share two error modes,
+a displaced and smeared bore and a flattened crest, and the weight
+parameterisation changes neither.}
+\label{fig:shock}
+\end{figure}
 
 \begin{table}[htbp]
 \centering\small

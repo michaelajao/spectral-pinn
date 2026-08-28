@@ -18,3 +18,12 @@ data/*
 
 # third-party reference code (cloned, not ours)
 third_party/
+
+# LaTeX build intermediates (the built PDF is committed so collaborators can
+# read the draft without a TeX install)
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.log
+paper/*.out
+paper/*.xdv

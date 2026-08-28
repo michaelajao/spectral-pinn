@@ -170,7 +170,8 @@ def main() -> None:
     args = p.parse_args()
 
     labels = {"dense": "pinn (dense)", "svd_soft": "cnpinn (svd_soft)",
-              "svd_hard": "ortho (svd_hard)", "svd_sigma": "sigma (svd_sigma)"}
+              "svd_hard": "ortho (svd_hard)", "svd_sigma": "sigma (svd_sigma)",
+              "svd_bounded": "bounded (svd_bounded)"}
     modes = [m.strip() for m in args.modes.split(",") if m.strip()]
     unknown = [m for m in modes if m not in WEIGHT_PARAMS]
     if unknown:

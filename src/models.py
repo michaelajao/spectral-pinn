@@ -33,6 +33,13 @@ dense weights.
   svd_sigma   train only s with U and V^T frozen at their orthogonal initial
               values: n trainable parameters per layer, exact spectral
               control, the cheapest member of the family.
+  svd_bounded the constraint the advection diagnostic points to: train U and s
+              with U rescaled every forward pass so its largest singular value
+              is 1, which bounds U's scale without forcing its other singular
+              values to 1. Strictly weaker than svd_hard's orthogonality and,
+              like it, carries no penalty and no w_U. The measured behaviour
+              of svd_soft at the published weight is a bounded but
+              rank-deficient U, which orthogonality forbids and this allows.
 
 FVM-informed PINN: the network predicts cell-averaged states on the solver
 grid at collocation times; the loss is the residual of the discrete SSP-RK2
@@ -53,14 +60,14 @@ from typing import Callable
 
 import torch
 import torch.nn as nn
-from torch.nn.utils import parametrizations
+from torch.nn.utils import parametrizations, parametrize
 
 from .solver import Config, pad_scalar, step, velocity
 
 _ACT = {"tanh": nn.Tanh, "gelu": nn.GELU, "silu": nn.SiLU}
 
 #: Weight-reparameterization modes accepted by PINNConfig.weight_param.
-WEIGHT_PARAMS = ("dense", "svd_soft", "svd_hard", "svd_sigma")
+WEIGHT_PARAMS = ("dense", "svd_soft", "svd_hard", "svd_sigma", "svd_bounded")
 
 
 class FourierFeatures(nn.Module):
@@ -97,6 +104,23 @@ def _init_weight(w: torch.Tensor, init: str) -> None:
         raise ValueError(f"unknown init '{init}'")
 
 
+class _SpectralCap(nn.Module):
+    """Rescale a matrix so its largest singular value is exactly 1.
+
+    Weaker than orthogonality: it pins sigma_max(U) and leaves the remaining
+    singular values free in [0, 1], so a rank-deficient U is reachable. That
+    is what distinguishes it from ``parametrizations.orthogonal``, which
+    forces every singular value to 1. The scale removed here is not lost to
+    the layer -- W = U diag(s) V^T, so ``s`` absorbs it.
+    """
+
+    def forward(self, U: torch.Tensor) -> torch.Tensor:
+        return U / torch.linalg.matrix_norm(U, ord=2).clamp_min(1e-12)
+
+    def right_inverse(self, U: torch.Tensor) -> torch.Tensor:
+        return U
+
+
 class SVDLinear(nn.Module):
     """Linear layer trained through the SVD factors of its initial weight.
 
@@ -106,7 +130,8 @@ class SVDLinear(nn.Module):
     set by ``mode`` (see module docstring): ``svd_soft`` trains U and s with
     V^T frozen, ``svd_hard`` additionally constrains U to the orthogonal
     manifold via ``torch.nn.utils.parametrizations.orthogonal`` (so no
-    penalty is needed), and ``svd_sigma`` trains s alone. SVD is performed
+    penalty is needed), ``svd_bounded`` instead pins only U's largest
+    singular value, and ``svd_sigma`` trains s alone. SVD is performed
     only at initialization, never during training (Wang et al., Algorithm 1).
     """
 
@@ -114,7 +139,7 @@ class SVDLinear(nn.Module):
                  init: str = "default", bias: bool = True,
                  defect_norm: str = "spectral"):
         super().__init__()
-        if mode not in ("svd_soft", "svd_hard", "svd_sigma"):
+        if mode not in ("svd_soft", "svd_hard", "svd_sigma", "svd_bounded"):
             raise ValueError(f"unknown SVDLinear mode '{mode}'")
         if defect_norm not in ("spectral", "frobenius"):
             raise ValueError(f"unknown defect_norm '{defect_norm}'")
@@ -142,6 +167,8 @@ class SVDLinear(nn.Module):
                 # at its current (orthogonal) value; gradients flow through
                 # the map, so every optimizer step stays on the manifold.
                 parametrizations.orthogonal(self, "U")
+            elif mode == "svd_bounded":
+                parametrize.register_parametrization(self, "U", _SpectralCap())
 
         if bias:
             self.bias = nn.Parameter(torch.empty(out_features))

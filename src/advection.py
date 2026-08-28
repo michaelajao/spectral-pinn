@@ -114,16 +114,29 @@ def make_training_data(seed: int) -> dict[str, torch.Tensor]:
 
 
 def train_one(weight_param: str, seed: int, iters: int, w_U: float,
-              box_eps: float = 0.1
+              box_eps: float = 0.1, optimizer: str = "lbfgs", lr: float = 1e-3
               ) -> tuple[float, list[dict[str, float]]]:
-    """Train one model with L-BFGS; return the L2 relative error on the
-    501 x 301 evaluation grid and the per-layer diagnostics."""
+    """Train one model and return the L2 relative error on the 501 x 301
+    evaluation grid plus the per-layer diagnostics.
+
+    ``optimizer`` selects L-BFGS (the source paper's protocol) or Adam. The
+    choice is not cosmetic for every weight parameterisation: ``svd_box`` uses
+    a straight-through estimator whose gradient disagrees with the function
+    value, which a strong-Wolfe line search cannot accept, so L-BFGS stalls on
+    it while a first-order method does not. Runs under the two optimisers are
+    not comparable to each other and must be tabulated separately.
+    """
     torch.manual_seed(seed)
     model = AdvectionMLP(weight_param, box_eps=box_eps)
     data = make_training_data(seed)
 
-    opt = torch.optim.LBFGS(model.parameters(), max_iter=iters,
-                            history_size=50, line_search_fn="strong_wolfe")
+    if optimizer == "lbfgs":
+        opt = torch.optim.LBFGS(model.parameters(), max_iter=iters,
+                                history_size=50, line_search_fn="strong_wolfe")
+    elif optimizer == "adam":
+        opt = torch.optim.Adam(model.parameters(), lr=lr)
+    else:
+        raise ValueError(f"unknown optimizer '{optimizer}'")
 
     xu_tu = torch.stack([data["xu"], data["tu"]], dim=1)
 
@@ -145,7 +158,11 @@ def train_one(weight_param: str, seed: int, iters: int, w_U: float,
         loss.backward()
         return loss
 
-    opt.step(closure)
+    if optimizer == "lbfgs":
+        opt.step(closure)
+    else:
+        for _ in range(iters):
+            opt.step(closure)
 
     with torch.no_grad():
         x = torch.linspace(*X_RANGE, 501)
@@ -168,6 +185,10 @@ def main() -> None:
                    default=ROOT / "reports" / "advection_reproduction.md")
     p.add_argument("--modes", default=",".join(WEIGHT_PARAMS),
                    help="comma-separated subset of " + ",".join(WEIGHT_PARAMS))
+    p.add_argument("--optimizer", choices=("lbfgs", "adam"), default="lbfgs",
+                   help="lbfgs is the source paper's protocol; adam is needed "
+                        "for svd_box, whose estimator L-BFGS cannot accept")
+    p.add_argument("--lr", type=float, default=1e-3, help="Adam learning rate")
     p.add_argument("--box-eps", type=float, default=0.1,
                    help="svd_box half-width: sigma(U) constrained to [1-eps, 1+eps]")
     p.add_argument("--diagnose", action="store_true",
@@ -188,7 +209,8 @@ def main() -> None:
     for label, wp in entries:
         errs, diags = [], []
         for s in range(args.seeds):
-            err, diag = train_one(wp, s, args.iters, args.w_U, args.box_eps)
+            err, diag = train_one(wp, s, args.iters, args.w_U, args.box_eps,
+                                  args.optimizer, args.lr)
             errs.append(err)
             diags += diag
         m, sd = statistics.mean(errs), (statistics.pstdev(errs) if len(errs) > 1 else 0.0)
@@ -204,8 +226,9 @@ def main() -> None:
               + (f"\n{'':22s} {summary}" if summary else ""), flush=True)
 
     lines = ["# Advection reproduction (Wang et al. 2026, Sect. 4.1 setup)\n",
-             f"3x25 tanh MLP, Xavier init, N_u=100, N_f=500 (LHS), L-BFGS "
-             f"max_iter={args.iters}, w_U={args.w_U:.3e} for svd_soft, "
+             f"3x25 tanh MLP, Xavier init, N_u=100, N_f=500 (LHS), "
+             f"{'L-BFGS max_iter' if args.optimizer == 'lbfgs' else f'Adam(lr={args.lr:g}) steps'}"
+             f"={args.iters}, w_U={args.w_U:.3e} for svd_soft, "
              f"{args.seeds} seeds. Published magnitudes: cnPINN ~1e-3, "
              f"vanilla PINN ~1e-2..1e-1 (their Figs. 5-7).\n",
              "| entry | L2 rel. error (mean ± std) | per-seed |"

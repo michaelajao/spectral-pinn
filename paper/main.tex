@@ -134,6 +134,22 @@ violated once training fully collapses. Whether the \emph{method} still helps wh
 its \emph{theory} does not apply is an empirical question, and it is the one that
 makes shock-dominated flow the informative test rather than merely a harder one.
 
+The apparatus for that test comes from a companion study by an overlapping
+author group, submitted to \emph{Computers \& Fluids}~\cite{dambreak2026comparative}.
+That study compares classical finite-volume schemes against several PINN
+formulations on six two-dimensional dam-break initial conditions under one set
+of conventions, and reports that a physics-only, finite-volume-informed network
+fails on the short cases where a strong-form network merely does poorly. We
+reuse its benchmark definitions, its conventions, and its differentiable HLLC
+solver, and we inherit its finding about the finite-volume-informed baseline
+rather than rederiving it. Two things follow. The comparison here is a
+controlled substitution --- only the weight parameterisation changes between
+entries, on fixed benchmarks and a fixed evaluation protocol --- and the
+reference solver output produced for that study, computed by independent
+implementations of HLL, Lax--Wendroff and MUSCL--Rusanov, is available to check
+our own reference against. Section~\ref{sec:refcheck} does exactly that, and it
+is the part of this paper we did not plan.
+
 This paper takes the three limitations in order and adds the excluded regime.
 Our results are largely negative, and we think the negative results are the
 useful part.
@@ -169,36 +185,6 @@ useful part.
     because a single fine-grid run is the usual reference in this literature
     and its uncertainty is rarely quoted.
 \end{itemize}
-
-\section{The parameterisation and the regimes compared}
-
-Write a hidden layer's weight as $W \in \mathbb{R}^{m\times n}$ and its
-initial factorisation as $W_0 = U_0 S_0 V_0^\top$. All regimes below keep
-$V = V_0$ frozen and differ in how $U$ and the spectrum are treated. A fifth,
-introduced in Section~\ref{sec:bounded} once the measurements motivate it,
-bounds $U$'s largest singular value.
-
-\begin{description}
-  \item[Unconstrained.] $W$ trained directly. The baseline.
-  \item[Penalised spectral.] $U$ and $s = \mathrm{diag}(S)$ trained, with
-    Eq.~\eqref{eq:penalty} added to the loss. This is the published method.
-  \item[Exactly orthogonal.] $U$ constrained to the Stiefel manifold by the
-    matrix-exponential parameterisation of Lezcano-Casado and
-    Mart\'inez-Rubio~\cite{lezcano2019orthogonal}, and $s$ trained. The
-    penalty and $\wU$ do not exist in this regime, which is what makes it the
-    direct test of the first stated limitation.
-  \item[Spectrum only.] $U$ and $V$ both frozen at their orthogonal initial
-    values, $s$ alone trained. Structurally this layer is the one used by
-    SVD-PINNs~\cite{gao2022svdpinn}; there it transfers a trained network to a
-    new equation, whereas here it is trained from scratch. The construction is
-    not ours and is not presented as new.
-\end{description}
-
-The distinction between the second and third regimes is the paper's pivot. If
-the penalty is an approximation to orthogonality, then enforcing orthogonality
-exactly should do at least as well and costs no tuned weight. If it is
-something else, the two will separate.
-
 
 \section{Related work}
 \label{sec:related}
@@ -265,13 +251,23 @@ different composition, in which the residual is that of a discrete conservative
 update rather than of the differential equation.
 
 \paragraph{Shallow-water dam breaks.}
-The benchmark suite, the finite-volume harness and the surrounding
-shallow-water PINN literature come from the comparative study
-of~\cite{dambreak2026comparative}, which evaluates classical schemes and
-several PINN formulations on six initial-condition variants under identical
-conventions. That study supplies both the initial conditions we reproduce and,
-through its reference solver output, the independent implementation against
-which we check our own reference in Section~\ref{sec:refcheck}.
+PINNs have been applied to the shallow-water equations for flood and dam-break
+prediction, generally on smooth or mildly discontinuous cases, and hybrids that
+embed a finite-volume update in the loss are the closest relatives of our
+physics-only baseline. That literature is surveyed in the companion study
+of~\cite{dambreak2026comparative}, from which our benchmark definitions,
+conventions ($[0,100]^2$~m domain, $g = 2$~m/s$^2$, Gaussian-hump bed,
+reflective walls) and differentiable HLLC solver are taken. Two of that study's
+results carry directly into this one. Its finding that the
+finite-volume-informed formulation collapses on short dam-break windows is
+reproduced here as a baseline rather than reinvestigated
+(Section~\ref{sec:swe}). Its reference solver output --- HLL, Lax--Wendroff and
+MUSCL--Rusanov runs on a $501^2$ node grid for the same initial conditions,
+produced by an implementation independent of ours --- is what makes
+Section~\ref{sec:refcheck} possible; without a second implementation there
+would be no way to put an uncertainty on the reference at all. Reusing a
+companion study's apparatus buys a controlled comparison and costs
+independence, and we flag both.
 
 \paragraph{Reference practice.}
 We found no comparable check in the PINN-for-conservation-laws literature. The
@@ -292,18 +288,95 @@ particular, a method published under different terminology for the same
 construction would not necessarily surface --- so the sweep needs repeating
 before submission.
 
-\section{Implementation}
+\section{Method}
+\label{sec:method}
 
-The penalty in Eq.~\eqref{eq:penalty} uses the matrix 2-norm, following the
-source paper. An early version of our code used the Frobenius norm, which at
-width 128 is up to 128 times stronger. Both are reported: the dam-break matrix
-of Table~\ref{tab:matrix} was produced with the Frobenius penalty and the
-sweep of Table~\ref{tab:sweep} with Eq.~\eqref{eq:penalty}, and
-Section~\ref{sec:sweep} compares them directly. The choice turns out to leave
-integrated depth error alone and to change where the shock is placed. All results here use L-BFGS at 3000 iterations
-for the advection case and Adam at $10^{-3}$ for 20000 iterations on the
-shallow-water cases. Seeds are set before model construction, so initial
-weights are reproducible.
+\subsection{The factorised layer}
+
+Write a hidden layer's weight as $W \in \mathbb{R}^{m\times n}$. At
+initialisation, and only there, it is factorised by singular value
+decomposition as
+\begin{equation}
+  W_0 = U_0 S_0 V_0^\top, \qquad
+  U_0 \in \mathbb{R}^{m\times r},\;
+  S_0 = \mathrm{diag}(s_0),\;
+  V_0 \in \mathbb{R}^{n\times r},
+  \label{eq:factor}
+\end{equation}
+with $r = \min(m,n)$. Thereafter the layer's effective weight is rebuilt from
+the stored factors on every forward pass, $W = U\,\mathrm{diag}(s)\,V^\top$,
+and the decomposition is never recomputed during training. Following the source
+paper, $V$ stays frozen at $V_0$, the first and last layers of the network keep
+ordinary dense weights, and only the square hidden-to-hidden weights are
+factorised. The parameter count rises by $r$ per factorised layer.
+
+If $U$ were orthogonal, the singular values of $W$ would be exactly $|s|$, and
+the optimiser would have direct control of each layer's spectrum. That is the
+mechanism the method is built on, and Eq.~\eqref{eq:penalty} is what is
+supposed to keep $U$ close enough to orthogonal for it to hold. Whether it does
+is the question of Section~\ref{sec:mechanism}.
+
+\subsection{The regimes compared}
+
+Every regime below shares Eq.~\eqref{eq:factor} and keeps $V = V_0$ frozen;
+they differ in what is trained and in what constrains $U$.
+
+\begin{description}
+  \item[Unconstrained.] $W$ trained directly, with no factorisation. The
+    baseline.
+  \item[Penalised spectral.] $U$ and $s$ trained, with $\wU \sum_j \DU_j^2$
+    from Eq.~\eqref{eq:penalty} added to the loss. This is the published
+    method, and $\wU$ is its one free parameter.
+  \item[Exactly orthogonal.] $U$ confined to the Stiefel manifold by the
+    matrix-exponential parametrisation of Lezcano-Casado and
+    Mart\'inez-Rubio~\cite{lezcano2019orthogonal}, and $s$ trained. The
+    constraint holds to machine precision at every step, so the penalty term
+    and $\wU$ do not exist. This is the direct test of the first stated
+    limitation: if the penalty is an approximation to orthogonality, enforcing
+    orthogonality exactly should do at least as well and needs no tuning.
+  \item[Spectrum only.] $U$ and $V$ both frozen at their orthogonal initial
+    values, $s$ alone trained --- $r$ parameters per layer instead of $mn$, and
+    exact spectral control by construction. Structurally this is the layer of
+    SVD-PINNs~\cite{gao2022svdpinn}, where it transfers a trained network to a
+    new equation; here it is trained from scratch. The construction is not ours
+    and is not presented as new.
+  \item[Bounded $\sigma_{\max}$.] $U$ rescaled on every forward pass so its
+    largest singular value is 1, with the others left free in $[0,1]$. Strictly
+    weaker than orthogonality, and no penalty. This regime is not part of the
+    original design; it is introduced in Section~\ref{sec:bounded} because the
+    measurements of Section~\ref{sec:mechanism} predict it should work, and
+    reporting it is how that prediction gets tested.
+\end{description}
+
+The pivot of the paper is the pair formed by the second and third regimes. They
+target the same constraint --- one softly with a tuned weight, one exactly and
+for free --- so if the penalty does what the source paper says it does, they
+should agree. They do not, and the rest of the paper is about why.
+
+\subsection{Implementation}
+
+The penalty of Eq.~\eqref{eq:penalty} uses the matrix 2-norm, following the
+source paper. An early version of our code used the Frobenius norm, which
+upper-bounds it by up to $\sqrt{n}$ and so is up to 128 times stronger at width
+128. Both are reported rather than one being discarded: the dam-break matrix of
+Table~\ref{tab:matrix} was produced with the Frobenius penalty and the sweep of
+Table~\ref{tab:sweep} with Eq.~\eqref{eq:penalty}, and
+Section~\ref{sec:sweep} compares them on the same benchmarks. Only the
+penalised entry reads that norm, so no other row is affected by the change.
+
+The advection case follows the source paper's protocol: L-BFGS with a
+strong-Wolfe line search, 3000 iterations. The shallow-water cases use Adam at
+$10^{-3}$ for 20000 iterations, since L-BFGS on a two-dimensional
+time-dependent problem with 20000 resampled collocation points is not
+practical. One regime forces a departure from this: the singular-value box of
+Section~\ref{sec:bounded} cannot be trained by L-BFGS at all, for reasons given
+there, so where it appears the optimiser is stated explicitly and its numbers
+are not compared across protocols.
+
+Random seeds are set before model construction rather than before the training
+loop, so initial weights --- and, where used, the Fourier feature matrix --- are
+reproducible from the seed alone. Every reported cell is five seeds on the
+shallow-water benchmarks and twenty on advection.
 
 \section{Reproduction and mechanism on the advection case}
 \label{sec:mechanism}

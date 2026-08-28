@@ -54,6 +54,32 @@ effort alongside other work.
 
 ## Results log
 
+**2026-08-26 — the predicted constraint fails, and the diagnostic that
+explains why.** `svd_bounded` pins sigma_max(U) = 1 and leaves the rest of U's
+spectrum free: strictly weaker than svd_hard, no penalty, no w_U, and it admits
+the rank-deficient U that svd_soft was measured to produce. It is the *worst*
+of the six regimes on the advection case — 4.68e-1 ± 5.1e-1 over 20 seeds,
+median 3.7e-1, below even w_U = 0
+(`reports/advection_bounded_20seeds.md`).
+
+The factor diagnostic says why
+(`reports/advection_bounded_diagnostic.md`, 3 seeds):
+
+| setting | median error | D_U | |s| vs true singular values | s_min |
+|---|---|---|---|---|
+| svd_soft, w_U = 1/35000 | 7.9e-3 | 0.98 | up to 13x | 0.003 |
+| svd_bounded | 3.8e-1 | 1.00 | up to 1290x | 0.000 |
+
+Both reach D_U ~= 1, so the statistic we used to characterise the penalty
+cannot tell them apart; their behaviour differs by two orders of magnitude in
+how far the effective weight's spectrum drifts from |s|. D_U = max_i
+|sigma_i(U)^2 - 1| saturates as soon as one direction collapses, so it cannot
+distinguish one collapsed direction from many. This retracts the "the penalty
+bounds U's scale" reading in the C1 entry above: a bound on scale is exactly
+what svd_bounded provides, and it fails. What the penalty does instead is open.
+The untested half of the prediction is a box holding every sigma_i(U) in
+[1-eps, 1+eps] — the obvious next experiment.
+
 **2026-08-26 — the reference has a resolution floor, and it varies by
 benchmark.** The co-authors' solver output for three of our IC variants is now
 vendored in `data/` and read by the harness, so our N = 512 HLLC reference can

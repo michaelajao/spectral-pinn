@@ -8,10 +8,10 @@
 \documentclass[11pt]{article}
 
 \usepackage[english]{babel}
-\usepackage[utf8]{inputenc}
 \usepackage{amsmath, amssymb}
 \usepackage{booktabs}
 \usepackage{graphicx}
+\graphicspath{{figures/}}
 \usepackage[colorlinks=true, allcolors=blue]{hyperref}
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{authblk}
@@ -49,8 +49,11 @@ factor to be exactly orthogonal, which removes $\wU$ entirely, reaches only
 $1.7\times10^{-2}$ median relative error against the penalty's
 $8.4\times10^{-3}$; removing the penalty from the same parameterisation
 returns the error to $2.1\times10^{-1}$, worse than an unconstrained
-network's $8.4\times10^{-2}$. We read the term as a bound on the factor's
-scale rather than an orthogonality constraint. Transferring the comparison to
+network's $8.4\times10^{-2}$. Reading the term as a bound on the factor's
+scale predicts that a weaker bound should also work; we test that by pinning
+only $\sigma_{\max}(U)$, and it is the worst regime of the six at
+$3.7\times10^{-1}$ median, so what the penalty supplies is a pull of the whole
+spectrum toward 1 rather than a bound on scale. Transferring the comparison to
 two-dimensional shallow-water dam breaks, where the solution carries a shock
 and the bounded-gradient hypothesis of the source paper's Theorem 2.1 fails,
 no spectral regime separates from an unmodified network by more than about
@@ -96,19 +99,21 @@ is formally inapplicable to the entire problem class. The authors say as much
 in a different context, noting that the condition is violated once training
 collapses.
 
-We take the three limitations in order and add the excluded regime. Section~4
-reproduces the advection case and then measures what the penalty does to the
-trained factors, which decides what kind of constraint the term is. Section~5
-moves the same four weight regimes to two-dimensional shallow-water dam
-breaks. Section~\ref{sec:refcheck} reports a result we did not set out to
-find: on two of three benchmarks the reference against which all of this is
+We take the three limitations in order and add the excluded regime.
+Section~\ref{sec:mechanism} reproduces the advection case and then measures
+what the penalty does to the trained factors, which decides what kind of
+constraint the term is. Section~\ref{sec:swe} moves the same weight regimes
+to two-dimensional shallow-water dam breaks.
+Section~\ref{sec:refcheck} reports a result we did not set out to find: on two of three benchmarks the reference against which all of this is
 measured is less certain than the differences being measured.
 
-\section{The parameterisation and the four regimes compared}
+\section{The parameterisation and the regimes compared}
 
 Write a hidden layer's weight as $W \in \mathbb{R}^{m\times n}$ and its
-initial factorisation as $W_0 = U_0 S_0 V_0^\top$. All four regimes below keep
-$V = V_0$ frozen and differ in how $U$ and the spectrum are treated.
+initial factorisation as $W_0 = U_0 S_0 V_0^\top$. All regimes below keep
+$V = V_0$ frozen and differ in how $U$ and the spectrum are treated. A fifth,
+introduced in Section~\ref{sec:bounded} once the measurements motivate it,
+bounds $U$'s largest singular value.
 
 \begin{description}
   \item[Unconstrained.] $W$ trained directly. The baseline.
@@ -210,7 +215,7 @@ heavy-tailed --- the unconstrained network's worst seed is 53 times its best
 \centering
 \caption{Relative $L^2$ error on the advection case over 20 seeds. The first
 two rows are the comparison the source paper reports (their Table 5, tanh
-activation); the last three are regimes it does not test. Reproducing the
+activation); the last four are regimes it does not test. Reproducing the
 published cells is what licenses reading the rest.}
 \label{tab:advection}
 \begin{tabular}{lccc}
@@ -221,6 +226,7 @@ Unconstrained            & $(1.37\pm1.4)\times10^{-1}$ & $8.4\times10^{-2}$ & $(
 Penalised, $\wU=1/35000$ & $(1.46\pm1.5)\times10^{-2}$ & $8.4\times10^{-3}$ & $(5.64\pm3.86)\times10^{-3}$ \\
 Exactly orthogonal       & $(3.31\pm3.9)\times10^{-2}$ & $1.7\times10^{-2}$ & --- \\
 Spectrum only            & $(3.29\pm5.5)\times10^{-1}$ & $1.2\times10^{-1}$ & --- \\
+Bounded $\sigma_{\max}(U)$     & $(4.68\pm5.1)\times10^{-1}$ & $3.7\times10^{-1}$ & --- \\
 Same parameterisation, $\wU=0$ & $(3.37\pm3.5)\times10^{-1}$ & $2.1\times10^{-1}$ & --- \\
 \bottomrule
 \end{tabular}
@@ -234,7 +240,19 @@ network and diverges on 2 of 20 seeds, so the trained directions rather than
 the trained spectrum carry the gain --- a negative result for the cheap
 variant, and one that already sits awkwardly with a spectral explanation of
 the mechanism. Removing the penalty while keeping the parameterisation is the
-worst regime of the five.
+worst regime bar the bounded one of Section~\ref{sec:bounded}.
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.75\textwidth]{fig_advection.pdf}
+\caption{Per-seed relative error on the advection case, 20 seeds per regime,
+log scale, ordered by median. The distributions are heavy-tailed and overlap
+heavily, which is why medians are quoted alongside means. Bounding
+$\sigma_{\max}(U)$ --- the weaker constraint predicted to substitute for the
+penalty --- is the worst regime, below even removing the penalty outright.}
+\label{fig:advection}
+\end{figure}
 
 \subsection{What the penalty does to the trained factors}
 
@@ -248,7 +266,9 @@ $|s|$ and the singular values of the effective weight $USV^\top$
 \centering
 \caption{Factor geometry after training, 3 seeds, median over layers. If the
 described mechanism held, $\DU$ would be near zero and the two spectra would
-coincide.}
+coincide. The bounded regime is discussed in Section~\ref{sec:bounded}; note
+that it matches the penalised regime's $\DU$ while missing the spectrum by two
+further orders of magnitude.}
 \label{tab:diagnostic}
 \begin{tabular}{lccc}
 \toprule
@@ -256,6 +276,7 @@ Setting & Median error & Median $\DU$ & $|s|$ vs.\ true singular values \\
 \midrule
 $\wU = 1/35000$ & $7.9\times10^{-3}$ & $0.98$ & up to $13\times$ apart \\
 $\wU = 0$       & $3.05\times10^{-1}$ & $63$ (max 177) & up to $31\times$ apart \\
+Bounded $\sigma_{\max}(U)$ & $3.8\times10^{-1}$ & $1.00$ & up to $1290\times$ apart \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -266,25 +287,66 @@ is rank-deficient, not near-orthogonal. The trained $s$ is not the effective
 weight's spectrum. Both premises of the stated mechanism fail, while the
 method's accuracy advantage holds.
 
-Ordering the four regimes by median error gives unconstrained-parameterised
-$2.1\times10^{-1}$, unconstrained $8.4\times10^{-2}$, exactly orthogonal
-$1.7\times10^{-2}$, weakly penalised $8.4\times10^{-3}$. The penalty is doing
-something the method needs; what it is doing is bounding the scale of $U$,
-since removing it lets the defect grow by two orders of magnitude and destroys
-the gain, while enforcing the constraint it nominally approximates recovers
-only about half of it. Exact orthogonality is a stronger constraint than the
-problem wants.
+Ordering the regimes by median error gives unconstrained-parameterised
+$2.1\times10^{-1}$, spectrum-only $1.2\times10^{-1}$, unconstrained
+$8.4\times10^{-2}$, exactly orthogonal $1.7\times10^{-2}$, weakly penalised
+$8.4\times10^{-3}$. The penalty is doing something the method needs: removing
+it lets the defect grow by two orders of magnitude and destroys the gain, while
+enforcing the constraint it nominally approximates recovers only about half of
+it. Exact orthogonality is a stronger constraint than the problem wants. The
+natural reading is that the term bounds the scale of $U$ rather than
+orthogonalising it, and Section~\ref{sec:bounded} tests that reading
+directly --- it does not survive.
 
-This reframes the first stated limitation. The open question is not how to
-adapt $\wU$ but which constraint class the term belongs to, and the ordering
-above predicts that a bound weaker than orthogonality --- a spectral-norm cap
-on $U$, or an explicit box on its singular values --- should recover the gain
-without a tuned penalty. Testing that prediction is the next step, and it is
-not yet done.
+This reframes the first stated limitation: the open question is not how to
+adapt $\wU$ but which constraint class the term belongs to. The ordering above
+suggested that a bound weaker than orthogonality --- a cap on $U$'s largest
+singular value, or a box on all of them --- should recover the gain without a
+tuned penalty. We implemented the first of those, and it does not.
+
+\subsection{Testing the prediction: bounding the largest singular value}
+\label{sec:bounded}
+
+The bounded regime rescales $U$ on every forward pass so that
+$\sigma_{\max}(U) = 1$, leaving the remaining singular values free in $[0,1]$.
+It is strictly weaker than orthogonality, which fixes all of them at 1, and it
+admits the rank-deficient factor the penalty was measured to produce. It
+carries no penalty term and no $\wU$. The scale it removes is not lost to the
+layer, since $W = U\,\mathrm{diag}(s)\,V^\top$ and $s$ is trained.
+
+Over 20 seeds it reaches $(4.68\pm5.1)\times10^{-1}$ mean and
+$3.7\times10^{-1}$ median relative error: the worst of the six regimes, below
+even the unpenalised parameterisation. The prediction is refuted.
+
+Measuring the bounded networks' factors explains the failure and corrects our
+earlier reading (last row of Table~\ref{tab:diagnostic}). The bounded regime
+reaches $\DU = 1.00$, essentially the same defect as the penalised regime's
+$0.98$ --- so on the statistic we used to characterise the penalty, the two are
+indistinguishable. They are not indistinguishable in behaviour: the gap between
+the trained $|s|$ and the effective weight's singular values is $13\times$ under
+the penalty and $1290\times$ under the cap, and the bounded networks drive their
+smallest trained singular value to $0$ exactly.
+
+The reason is that $\DU = \max_i |\sigma_i(U)^2 - 1|$ saturates as soon as a
+single direction of $U$ collapses, so it cannot distinguish one collapsed
+direction from many. Capping $\sigma_{\max}(U)$ reproduces the value of $\DU$
+while leaving the rest of the spectrum free to collapse, and the effective
+weight then has nothing to do with the spectrum $s$ nominally controls. The
+conclusion is narrower than the one we drew from the accuracy ordering alone:
+what the penalty supplies is not a bound on the factor's scale --- a bound on
+scale is exactly what the cap provides, and it fails --- and $\DU$ is too coarse
+a summary to say what it is instead. Section~\ref{sec:mechanism}'s reading was
+underdetermined by its own evidence.
+
+The other half of the prediction --- a box holding every singular value of $U$
+in $[1-\varepsilon, 1+\varepsilon]$ --- follows from that reading and is
+untested. It is the constraint class that matches the measured behaviour, with
+$\varepsilon$ a geometrically interpretable knob in place of a loss weight on
+an unnormalised penalty, and it is the experiment we would run next.
 
 The evidence here is one smooth one-dimensional problem, one architecture and
 one optimiser. Whether the ordering survives on a shock is a separate
-question, which is what Section~5 asks.
+question, which is what Section~\ref{sec:swe} asks.
 
 \section{Shallow-water dam breaks}
 \label{sec:swe}
@@ -307,6 +369,17 @@ Baselines are an unmodified network, a Fourier-feature network --- the
 standard remedy for high-frequency targets, absent from the source paper's
 comparison --- and a finite-volume-informed network. Five seeds per cell.
 
+Every strong-form entry is a 6-layer, 128-unit tanh network mapping
+$(x,y,t)$ to primitive variables $(h,u,v)$, trained by Adam at $10^{-3}$ for
+20000 iterations with gradient clipping at 1.0, on 20000 collocation points
+resampled each step, with the initial condition imposed as a penalty at every
+cell centre weighted 10 against the residual. Following the source paper, the
+input and output layers stay dense and only the square hidden weights are
+factorised. The Fourier-feature baseline uses 32 frequencies. The
+finite-volume-informed entry predicts cell averages on the solver grid at 41
+collocation times and is trained against the residual of the discrete SSP-RK2
+update.
+
 \subsection{Results}
 
 Table~\ref{tab:matrix} gives all five benchmarks, five seeds each. On the
@@ -320,23 +393,23 @@ at the same resolution.
 \begin{table}[htbp]
 \centering\small
 \caption{$L^1$ depth error at the final output time on the $128^2$ evaluation
-grid, mean $\pm$ s.d.\ over 5 seeds. The classical row is HLLC MUSCL--van Leer
-at the evaluation resolution, not the reference. Section~\ref{sec:refcheck}
-gives the reference uncertainty for the first, third and fourth columns; it
-exceeds several of the differences in this table.}
+grid, mean $\pm$ s.d.\ over 5 seeds. Each column carries its own factor.
+Section~\ref{sec:refcheck} gives the reference uncertainty for the wet,
+step and Gaussian columns; it exceeds several of the differences here.}
 \label{tab:matrix}
 \begin{tabular}{lccccc}
 \toprule
-Entry & Circular, wet & Circular, dry & Step & Gaussian mound & Three humps \\
+ & Circular, wet & Circular, dry & Step & Gaussian mound & Three humps \\
+Entry & ($\times10^{3}$) & ($\times10^{3}$) & ($\times10^{3}$) & ($\times10^{2}$) & ($\times10^{2}$) \\
 \midrule
-Classical, $128^2$ & $3.914\times10^{2}$ & $3.798\times10^{2}$ & $2.476\times10^{2}$ & $6.357\times10^{0}$ & $7.965\times10^{1}$ \\
+Classical, $128^2$ & $0.391$ & $0.380$ & $0.248$ & $0.064$ & $0.797$ \\
 \midrule
-Unconstrained      & $(1.602\pm0.012)\!\times\!10^{3}$ & $(1.681\pm0.076)\!\times\!10^{3}$ & $(1.028\pm0.11)\!\times\!10^{3}$ & $(3.83\pm0.22)\!\times\!10^{2}$ & $(8.87\pm0.68)\!\times\!10^{2}$ \\
-Fourier features   & $(1.681\pm0.11)\!\times\!10^{3}$ & $(1.838\pm0.12)\!\times\!10^{3}$ & $(1.124\pm0.068)\!\times\!10^{3}$ & $(4.03\pm0.48)\!\times\!10^{2}$ & $(7.96\pm1.5)\!\times\!10^{2}$ \\
-Penalised spectral & $(1.662\pm0.12)\!\times\!10^{3}$ & $(1.602\pm0.054)\!\times\!10^{3}$ & $(1.106\pm0.047)\!\times\!10^{3}$ & $(4.69\pm0.55)\!\times\!10^{2}$ & $(7.49\pm1.1)\!\times\!10^{2}$ \\
-Exactly orthogonal & $(1.725\pm0.13)\!\times\!10^{3}$ & $(1.507\pm0.14)\!\times\!10^{3}$ & $(1.054\pm0.071)\!\times\!10^{3}$ & $(9.69\pm1.8)\!\times\!10^{2}$ & $(9.19\pm2.3)\!\times\!10^{2}$ \\
-Spectrum only      & $(2.347\pm0.11)\!\times\!10^{3}$ & $(2.314\pm0.19)\!\times\!10^{3}$ & $(1.126\pm0.015)\!\times\!10^{3}$ & $(9.16\pm0.34)\!\times\!10^{2}$ & $(6.08\pm1.1)\!\times\!10^{2}$ \\
-FV-informed        & $(1.481\pm0.24)\!\times\!10^{4}$ & $(0.932\pm0.054)\!\times\!10^{4}$ & $(1.365\pm0.27)\!\times\!10^{4}$ & $(4.40\pm0.56)\!\times\!10^{3}$ & $(8.66\pm0.22)\!\times\!10^{2}$ \\
+Unconstrained      & $1.602\pm0.012$ & $1.681\pm0.076$ & $1.028\pm0.11$  & $3.83\pm0.22$ & $8.87\pm0.68$ \\
+Fourier features   & $1.681\pm0.11$  & $1.838\pm0.12$  & $1.124\pm0.068$ & $4.03\pm0.48$ & $7.96\pm1.5$ \\
+Penalised spectral & $1.662\pm0.12$  & $1.602\pm0.054$ & $1.106\pm0.047$ & $4.69\pm0.55$ & $7.49\pm1.1$ \\
+Exactly orthogonal & $1.725\pm0.13$  & $1.507\pm0.14$  & $1.054\pm0.071$ & $9.69\pm1.8$  & $9.19\pm2.3$ \\
+Spectrum only      & $2.347\pm0.11$  & $2.314\pm0.19$  & $1.126\pm0.015$ & $9.16\pm0.34$ & $6.08\pm1.1$ \\
+FV-informed        & $14.81\pm2.4$   & $9.32\pm0.54$   & $13.65\pm2.7$   & $44.0\pm5.6$  & $8.66\pm0.22$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -363,6 +436,21 @@ completeness and should not be used to rank methods.
 
 The finite-volume-informed network collapses on the four short cases, matching
 the behaviour reported for it in~\cite{dambreak2026comparative}.
+
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{fig_matrix.pdf}
+\caption{$L^1$ depth error by benchmark, mean $\pm$ s.d.\ over 5 seeds; the
+finite-volume-informed entry is off-scale and omitted. The blue line is a
+classical scheme at the evaluation resolution. The orange band, where present,
+spans the disagreement between our reference and two independently implemented
+schemes on the same initial condition (Section~\ref{sec:refcheck}); on the step
+release it sits above every neural result, and on the Gaussian mound it is the
+width of the vanilla network's own error. Only the Gaussian mound separates the
+regimes, and it separates them against the constrained ones.}
+\label{fig:matrix}
+\end{figure}
 
 \subsection{Does the penalty weight matter here?}
 \label{sec:sweep}
@@ -412,6 +500,51 @@ Integrated depth error was almost unaffected by the same change
 ($1.662\times10^3$ against $1.601\times10^3$ on the wet bed), so the norm
 choice matters for where the shock is placed and not for the depth field as a
 whole.
+
+\subsection{What the regimes cost}
+\label{sec:cost}
+
+The second stated limitation is the penalty's training overhead, which the
+source paper puts at 1.28 to 1.83 times vanilla across its width and
+collocation sweeps. Table~\ref{tab:cost} gives wall-clock training time over
+all 25 runs per entry on one Quadro RTX 8000.
+
+\begin{table}[htbp]
+\centering
+\caption{Mean training time per run, 25 runs per entry (5 benchmarks $\times$
+5 seeds), identical iteration budgets. The penalty is nearly free here; the
+penalty-free alternative is the expensive one.}
+\label{tab:cost}
+\begin{tabular}{lcc}
+\toprule
+Entry & Mean training time (s) & Relative to unconstrained \\
+\midrule
+Unconstrained      & 861 & $1.00\times$ \\
+Spectrum only      & 862 & $1.00\times$ \\
+Penalised spectral & 884 & $1.03\times$ \\
+Fourier features   & 946 & $1.10\times$ \\
+Exactly orthogonal & 1226 & $1.42\times$ \\
+FV-informed        & 2048 & $2.38\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The overhead the source paper reports does not reproduce in this setting: the
+penalty costs 3\%, not 28--83\%. One 2-norm of a $128\times128$ matrix per
+factorised layer per step is negligible against 20000 collocation points, and
+we suspect the published figures reflect a smaller problem where the penalty
+is a larger share of the step, or a different implementation of the norm.
+
+The direction of the comparison matters more than the absolute numbers.
+Removing the penalty by constraining the factor exactly costs 42\%, because
+the matrix-exponential retraction runs on every forward pass. So on cost
+grounds the penalty-free route is worse than the penalty, not better, and the
+motivation for eliminating $\wU$ has to rest on the tuning burden alone ---
+which Section~\ref{sec:sweep} shows does not exist on these problems either.
+Spectrum-only training is free relative to the baseline, as expected from
+training $n$ parameters per layer instead of $n^2$, but it buys nothing in
+accuracy.
+
 
 \subsection{How far the reference can be trusted}
 \label{sec:refcheck}
@@ -482,10 +615,10 @@ basis for the paper's central claim about what the penalty does. It should be
 repeated on the shallow-water networks, where the per-run factor diagnostics
 are now recorded but not yet analysed.
 
-The constraint that Section~\ref{sec:mechanism} predicts --- a bound on the
-factor's largest singular value, weaker than orthogonality and carrying no
-tuned weight --- is implemented and running at the time of writing. Until it
-reports, the prediction stands as a prediction.
+The singular-value box of Section~\ref{sec:bounded}, which is what the refuted
+prediction points to, is not implemented. Until it is, the claim that the
+penalty acts by pulling the whole spectrum toward 1 rests on one measurement
+of $D$ and one failed alternative, both on the advection case.
 
 Two of the five contributions in the project proposal have no section here.
 The pointwise condition-number field, which is the diagnostic that would
@@ -504,8 +637,14 @@ own advection problem and is not doing what the paper says it does. At the
 published weight the trained factor is rank-deficient rather than orthogonal,
 and the trained singular values are not the effective weight's spectrum, yet
 removing the penalty destroys the accuracy gain and enforcing exact
-orthogonality recovers only about half of it. The term acts as a bound on the
-factor's scale.
+orthogonality recovers only about half of it. Replacing the penalty with a
+bound on the factor's largest singular value --- the weaker constraint that
+reading suggests --- is the worst of the six regimes we tried. That rules the
+scale-bound reading out rather than replacing it: the bounded networks match
+the penalised ones on the orthogonality defect $\DU$ while missing the
+effective spectrum by two further orders of magnitude, so $\DU$ is too coarse
+a statistic to characterise what the penalty does, and what it does instead
+remains open.
 
 Moving to shock-dominated shallow-water flow, outside the reach of the source
 paper's Theorem 2.1, the picture is flatter and in one place reversed. On the

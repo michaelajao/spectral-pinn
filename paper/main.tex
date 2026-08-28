@@ -93,7 +93,7 @@ constraint. That reading has produced gradient-based
 rebalancing~\cite{wang2021gradient}, neural-tangent-kernel
 weighting~\cite{wang2022ntk}, self-adaptive pointwise
 weights~\cite{mcclenny2023selfadaptive} and augmented-Lagrangian treatments of
-the boundary conditions~\cite{son2022alpinn}. A third account, the one this
+the boundary conditions~\cite{son2023alpinn}. A third account, the one this
 paper is about, looks at the weights themselves.
 
 Wang et al.~\cite{wang2026cnpinn} propose a diagnostic and a remedy built on a
@@ -147,12 +147,10 @@ controlled substitution --- only the weight parameterisation changes between
 entries, on fixed benchmarks and a fixed evaluation protocol --- and the
 reference solver output produced for that study, computed by independent
 implementations of HLL, Lax--Wendroff and MUSCL--Rusanov, is available to check
-our own reference against. Section~\ref{sec:refcheck} does exactly that, and it
-is the part of this paper we did not plan.
+our own reference against. Section~\\ref{sec:refcheck} reports that comparison.
 
-This paper takes the three limitations in order and adds the excluded regime.
-Our results are largely negative, and we think the negative results are the
-useful part.
+This paper addresses the three limitations in turn and extends the evaluation
+to the excluded regime. The principal findings are as follows.
 
 \begin{itemize}
   \item Reproducing the advection case over 20 seeds and then measuring the
@@ -205,7 +203,7 @@ only as an ablation of their own method, not as a SIREN baseline.
 \paragraph{Loss balance and constraint handling.}
 The loss-weighting line rebalances terms whose gradients differ in
 magnitude~\cite{wang2021gradient, wang2022ntk, mcclenny2023selfadaptive}.
-AL-PINNs~\cite{son2022alpinn} instead treat the initial and boundary data as
+AL-PINNs~\cite{son2023alpinn} instead treat the initial and boundary data as
 constraints and apply an augmented-Lagrangian method, replacing a fixed weight
 by a multiplier with an update rule. The distinction from the present work is
 what the constraint is placed on: those methods constrain the \emph{solution}
@@ -240,7 +238,7 @@ A pointwise PDE residual is not defined at a discontinuity, so the line of work
 aimed at conservation laws changes the objective or the architecture rather
 than the weights. Weak and entropy formulations replace the strong residual
 with one that remains defined for discontinuous solutions and select the
-physically admissible weak solution~\cite{deryck2022wpinn}; other approaches
+physically admissible weak solution~\cite{deryck2024wpinn}; other approaches
 impose jump conditions through the architecture, concentrate loss weight near
 detected shocks, or borrow relaxation formulations from the numerical-analysis
 literature. None of these measures or controls a property of the network's
@@ -316,42 +314,63 @@ mechanism the method is built on, and Eq.~\eqref{eq:penalty} is what is
 supposed to keep $U$ close enough to orthogonal for it to hold. Whether it does
 is the question of Section~\ref{sec:mechanism}.
 
-\subsection{The regimes compared}
+\subsection{Weight parameterisations compared}
 
-Every regime below shares Eq.~\eqref{eq:factor} and keeps $V = V_0$ frozen;
-they differ in what is trained and in what constrains $U$.
+Five parameterisations of the hidden layers are compared. They share
+Eq.~\eqref{eq:factor} and keep $V = V_0$ frozen, and differ in what is trained
+and in what constrains $U$. Table~\ref{tab:regimes} summarises them.
 
-\begin{description}
-  \item[Unconstrained.] $W$ trained directly, with no factorisation. The
-    baseline.
-  \item[Penalised spectral.] $U$ and $s$ trained, with $\wU \sum_j \DU_j^2$
-    from Eq.~\eqref{eq:penalty} added to the loss. This is the published
-    method, and $\wU$ is its one free parameter.
-  \item[Exactly orthogonal.] $U$ confined to the Stiefel manifold by the
-    matrix-exponential parametrisation of Lezcano-Casado and
-    Mart\'inez-Rubio~\cite{lezcano2019orthogonal}, and $s$ trained. The
-    constraint holds to machine precision at every step, so the penalty term
-    and $\wU$ do not exist. This is the direct test of the first stated
-    limitation: if the penalty is an approximation to orthogonality, enforcing
-    orthogonality exactly should do at least as well and needs no tuning.
-  \item[Spectrum only.] $U$ and $V$ both frozen at their orthogonal initial
-    values, $s$ alone trained --- $r$ parameters per layer instead of $mn$, and
-    exact spectral control by construction. Structurally this is the layer of
-    SVD-PINNs~\cite{gao2022svdpinn}, where it transfers a trained network to a
-    new equation; here it is trained from scratch. The construction is not ours
-    and is not presented as new.
-  \item[Bounded $\sigma_{\max}$.] $U$ rescaled on every forward pass so its
-    largest singular value is 1, with the others left free in $[0,1]$. Strictly
-    weaker than orthogonality, and no penalty. This regime is not part of the
-    original design; it is introduced in Section~\ref{sec:bounded} because the
-    measurements of Section~\ref{sec:mechanism} predict it should work, and
-    reporting it is how that prediction gets tested.
-\end{description}
+In the unconstrained case the weight $W$ is trained directly, without
+factorisation; this is the vanilla network and serves as the baseline. The
+penalised parameterisation trains $U$ and $s$ and adds
+$\wU \sum_j \DU_j^2$ from Eq.~\eqref{eq:penalty} to the loss, which is the
+method of~\cite{wang2026cnpinn} and carries the single free parameter $\wU$.
 
-The pivot of the paper is the pair formed by the second and third regimes. They
-target the same constraint --- one softly with a tuned weight, one exactly and
-for free --- so if the penalty does what the source paper says it does, they
-should agree. They do not, and the rest of the paper is about why.
+The exactly orthogonal parameterisation confines $U$ to the Stiefel manifold
+using the matrix-exponential map of Lezcano-Casado and
+Mart\'inez-Rubio~\cite{lezcano2019orthogonal}, so that $U^\top U = I$ holds to
+machine precision after every optimiser step and the singular values of $W$
+equal $|s|$ exactly. The penalty term is then redundant and $\wU$ does not
+appear. This parameterisation and the penalised one target the same property
+by different means, one approximately with a tuned weight and one exactly
+without, so a comparison between them isolates the contribution of the penalty
+from the contribution of the factorisation.
+
+In the spectrum-only parameterisation both $U$ and $V$ are frozen at their
+orthogonal initial values and $s$ alone is trained, giving $r$ trainable
+parameters per layer in place of $mn$ and exact spectral control by
+construction. The same three-factor layer is used by SVD-PINNs, where the
+singular vectors of a trained network are retained and the singular values
+retrained for a new equation~\cite{gao2022svdpinn}; the construction is not
+introduced here, and the difference is that training proceeds from scratch.
+
+The fifth parameterisation constrains only the largest singular value of $U$,
+rescaling it on every forward pass so that $\sigma_{\max}(U) = 1$ while the
+remaining singular values stay free in $[0,1]$. It is therefore strictly weaker
+than exact orthogonality, which fixes all of them at unity, and it requires no
+penalty. It is introduced in Section~\ref{sec:bounded}, where the factor
+measurements of Section~\ref{sec:diag} motivate it.
+
+\begin{table}[htbp]
+\centering
+\caption{Weight parameterisations of the hidden layers. All except the
+unconstrained case use the factorisation of Eq.~\eqref{eq:factor} with $V$
+frozen at $V_0$; $r = \min(m,n)$ and $\sigma_i(U)$ denotes the $i$-th singular
+value of $U$.}
+\label{tab:regimes}
+\small
+\begin{tabular}{llll}
+\toprule
+Parameterisation & Trained & Constraint on $U$ & Free parameter \\
+\midrule
+Unconstrained      & $W$      & none & --- \\
+Penalised spectral & $U$, $s$ & $\wU \sum_j \DU_j^2$ in the loss & $\wU$ \\
+Exactly orthogonal & $U$, $s$ & $\sigma_i(U) = 1$ for all $i$ & --- \\
+Spectrum only      & $s$      & $U$ frozen orthogonal & --- \\
+Bounded $\sigma_{\max}$ & $U$, $s$ & $\sigma_{\max}(U) = 1$ & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \subsection{Implementation}
 
@@ -378,10 +397,10 @@ loop, so initial weights --- and, where used, the Fourier feature matrix --- are
 reproducible from the seed alone. Every reported cell is five seeds on the
 shallow-water benchmarks and twenty on advection.
 
-\section{Reproduction and mechanism on the advection case}
+\section{The advection benchmark}
 \label{sec:mechanism}
 
-\subsection{The gate}
+\subsection{Reproduction of the published comparison}
 
 Table~\ref{tab:advection} repeats the source paper's Section 4.1 advection
 setup: a $3\times25$ tanh network, Xavier initialisation, 100 boundary and 500
@@ -433,7 +452,8 @@ penalty --- is the worst regime, below even removing the penalty outright.}
 \label{fig:advection}
 \end{figure}
 
-\subsection{What the penalty does to the trained factors}
+\subsection{Factor geometry after training}
+\label{sec:diag}
 
 The source paper reports errors, not factor geometry. We measure, per
 factorised layer of trained networks over 3 seeds, the orthogonality defect
@@ -481,9 +501,9 @@ This reframes the first stated limitation: the open question is not how to
 adapt $\wU$ but which constraint class the term belongs to. The ordering above
 suggested that a bound weaker than orthogonality --- a cap on $U$'s largest
 singular value, or a box on all of them --- should recover the gain without a
-tuned penalty. We implemented the first of those, and it does not.
+tuned penalty. The first of these is evaluated below.
 
-\subsection{Testing the prediction: bounding the largest singular value}
+\subsection{A weaker constraint on the left factor}
 \label{sec:bounded}
 
 The bounded regime rescales $U$ on every forward pass so that
@@ -522,20 +542,18 @@ in $[1-\varepsilon, 1+\varepsilon]$: the constraint class that matches the
 measured behaviour, with $\varepsilon$ a geometric knob that recovers exact
 orthogonality at $\varepsilon = 0$ and the unconstrained parameterisation as
 $\varepsilon$ grows, in place of a loss weight on an unnormalised penalty. We
-implemented it as a projection and could not train it under this paper's
-protocol, for a reason worth recording. The projection is exact --- the
-constrained networks have every singular value inside the box to five decimal
-places --- but its Jacobian is ill-conditioned precisely where the layer
-operates: differentiating through the singular value decomposition introduces
+implemented it as a projection, which proved untrainable under the present
+protocol. The projection itself is exact, in that trained networks have every
+singular value inside the box to five decimal places, but its Jacobian is
+ill-conditioned precisely where the layer operates: differentiating through the singular value decomposition introduces
 $1/(\sigma_i^2 - \sigma_j^2)$ terms, and the box holds every $\sigma_i$ near 1.
 The exact gradient produced non-finite values within a few hundred iterations.
 A straight-through estimator is stable and keeps the constraint, but its
 gradient disagrees with the function value, and L-BFGS with a strong-Wolfe line
 search then makes almost no progress: over 300 iterations the loss falls from
 $2.91\times10^{-1}$ to $2.76\times10^{-1}$, against $1.82\times10^{-1}$ for the
-exactly-orthogonal regime from the same initialisation. We report this as an
-open implementation problem rather than as evidence about the constraint class,
-which it is not.
+exactly-orthogonal regime from the same initialisation. This is therefore an open implementation problem, and does not constitute
+evidence about the constraint class itself.
 
 The difficulty is itself relevant to the paper's subject. A soft penalty is
 differentiable everywhere and costs one matrix norm per layer; the hard
@@ -544,16 +562,16 @@ singular on the set where the constraint binds. That asymmetry is a practical
 reason for the source paper's design that its own discussion does not give, and
 it is a better argument for the penalty than the mechanism the paper offers.
 Whether a first-order optimiser tolerates the straight-through estimator well
-enough to make the box trainable is untested; that is the next thing to try.
+enough to make the box trainable remains untested.
 
 The evidence here is one smooth one-dimensional problem, one architecture and
 one optimiser. Whether the ordering survives on a shock is a separate
 question, which is what Section~\ref{sec:swe} asks.
 
-\section{Shallow-water dam breaks}
+\section{Shock-dominated shallow-water benchmarks}
 \label{sec:swe}
 
-\subsection{Setup}
+\subsection{Benchmarks and evaluation protocol}
 
 The benchmarks are two-dimensional dam breaks over a Gaussian-hump bed at the
 conventions of the comparative study of Zahra
@@ -582,7 +600,7 @@ finite-volume-informed entry predicts cell averages on the solver grid at 41
 collocation times and is trained against the residual of the discrete SSP-RK2
 update.
 
-\subsection{Results}
+\subsection{Accuracy across benchmarks}
 
 Table~\ref{tab:matrix} gives all five benchmarks, five seeds each. On the
 three shock-dominated cases no spectral regime separates from an unmodified
@@ -621,11 +639,35 @@ Gaussian mound --- the only smooth initial condition in the set, and the case
 closest to the regime the source paper validates in --- exact orthogonality
 reaches $(9.69\pm1.8)\times10^2$ against the unconstrained network's
 $(3.83\pm0.22)\times10^2$, and spectrum-only training $(9.16\pm0.34)\times10^2$.
-That is a factor of $2.5$ in the wrong direction, it is far outside the seed
-spread, and Section~\ref{sec:refcheck} puts the reference uncertainty on this
-benchmark at $3.8\times10^2$, so the gap is resolvable where smaller ones are
-not. The penalised regime is intermediate at $(4.69\pm0.55)\times10^2$.
-Constraining the factor hurts most where the target is smooth.
+This is a factor of $2.5$ in the adverse direction, well outside the seed
+spread, and Section~\ref{sec:refcheck} places the reference uncertainty on this
+benchmark at $3.8\times10^2$, so the difference is resolvable where smaller ones
+are not. The penalised parameterisation is intermediate at
+$(4.69\pm0.55)\times10^2$.
+
+Fig.~\ref{fig:fields} shows where the additional error lies. All four fields
+reproduce the collapsing mound and the outward-spreading front, and the signed
+error fields share one spatial structure: a positive core at the crest, ringed
+by a negative annulus at the mound edge where the depth gradient is steepest.
+Constraining $U$ does not move that structure or introduce a new one; it scales
+it. The ring deepens from panel (E) to panel (G) while its radius and sign
+pattern are unchanged. Whatever the constraint costs is paid where the solution
+varies most rapidly, and on this benchmark that is a smooth but steep feature
+rather than a discontinuity.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{fig_fields.pdf}
+\caption{(Color online) Water depth on the Gaussian-mound benchmark at
+$t = 2$~s, seed 0, on the $128^2$ evaluation grid. Top row: (A) the HLLC
+reference at $N = 512$; (B) the unconstrained network; (C) the penalised
+spectral parameterisation; (D) exact orthogonality. Bottom row: the
+corresponding signed error fields (E)--(G) on a common scale, with the $L^1$
+depth error of each. The error is concentrated in a ring at the edge of the
+mound and at its crest, and grows with the strength of the constraint placed on
+$U$ while its spatial distribution is unchanged.}
+\label{fig:fields}
+\end{figure}
 
 On the three-hump case with Manning friction the ordering inverts:
 spectrum-only training is the best neural entry at $(6.08\pm1.1)\times10^2$
@@ -654,7 +696,7 @@ regimes, and it separates them against the constrained ones.}
 \label{fig:matrix}
 \end{figure}
 
-\subsection{Does the penalty weight matter here?}
+\subsection{Sensitivity to the penalty weight}
 \label{sec:sweep}
 
 The first of the source paper's stated limitations is that $\wU$ must be tuned
@@ -703,7 +745,7 @@ Integrated depth error was almost unaffected by the same change
 choice matters for where the shock is placed and not for the depth field as a
 whole.
 
-\subsection{What the regimes cost}
+\subsection{Computational cost}
 \label{sec:cost}
 
 The second stated limitation is the penalty's training overhead, which the
@@ -748,7 +790,7 @@ training $n$ parameters per layer instead of $n^2$, but it buys nothing in
 accuracy.
 
 
-\subsection{How far the reference can be trusted}
+\subsection{Uncertainty in the reference solution}
 \label{sec:refcheck}
 
 Every number in Table~\ref{tab:matrix} is measured against one solver's output.
